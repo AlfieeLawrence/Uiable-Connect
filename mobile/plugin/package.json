@@ -1,0 +1,9 @@
+{
+  "name": "uiable-ssh",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal native SSH for Uiable Connect: connect, exec, PTY shell, SFTP, local port forward, secure storage",
+  "license": "MIT",
+  "files": ["android/src", "android/build.gradle", "ios/Sources", "Package.swift", "UiableSsh.podspec"],
+  "capacitor": { "android": { "src": "android" }, "ios": { "src": "ios" } }
+}

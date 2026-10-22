@@ -1,0 +1,56 @@
+/* Touch layout for the shared UI. Safe areas (notch, home bar), bigger tap targets, drawer + bottom tabs on phones. */
+:root { --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px); --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px); }
+html, body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+body.mobile { user-select: none; -webkit-user-select: none; }
+body.mobile input, body.mobile textarea, body.mobile .xterm { user-select: text; -webkit-user-select: text; }
+body.mobile input, body.mobile textarea, body.mobile select { font-size: 16px; } /* stops iOS zoom-on-focus */
+#layout { height: 100dvh; height: var(--vvh, 100dvh); padding-left: var(--sal); padding-right: var(--sar); }
+#side { padding-top: calc(16px + var(--sat)); padding-bottom: calc(12px + var(--sab)); transition: transform .22s ease, margin .22s ease; }
+#main { padding-top: calc(12px + var(--sat)); padding-bottom: calc(12px + var(--sab)); }
+button { min-height: 40px; } button.sm { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+.srv { padding: 14px 12px; }
+.burger { font-size: 18px; padding: 4px 12px; }
+body.side-collapsed #side { margin-left: -250px; }
+#scrim { display: none; }
+table.list td, table.list th { padding: 11px 10px; }
+.files .row { flex-wrap: wrap; gap: 6px; }
+.files .crumbs { flex-basis: 100%; overflow-x: auto; flex-wrap: nowrap; }
+.kx { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 0; scrollbar-width: none; flex-shrink: 0; } .kx::-webkit-scrollbar { display: none; }
+.kx button { flex-shrink: 0; min-width: 44px; justify-content: center; font-family: var(--mono); }
+.kx button.active { background: var(--accent); color: #fff; }
+.termhost { padding: 4px; }
+#toasts { bottom: calc(18px + var(--sab)); right: 12px; left: 12px; align-items: flex-end; }
+.prog { left: 12px; bottom: calc(18px + var(--sab)); }
+.modal-bg { padding: calc(12px + var(--sat)) 12px calc(12px + var(--sab)); }
+.modal.full { height: 100%; }
+.ios-note { display: block; margin-top: 8px; }
+
+/* ---------- phones */
+@media (max-width: 760px) {
+  #side { position: fixed; z-index: 90; top: 0; bottom: 0; left: 0; width: min(82vw, 300px); background: var(--card-solid); transform: translateX(-105%); box-shadow: var(--shadow); }
+  body.drawer-open #side { transform: none; }
+  body.drawer-open #scrim { display: block; position: fixed; inset: 0; z-index: 80; background: rgba(5,7,12,.55); }
+  #main { padding: calc(10px + var(--sat)) 12px calc(76px + var(--sab)); gap: 10px; }
+  #main > .row { flex-wrap: wrap; gap: 8px; }
+  #main > .row h2 { font-size: 19px; }
+  /* tabs become a bottom tab bar */
+  .tabs { flex-wrap: wrap; }
+  .tabs .seg { position: fixed; z-index: 70; left: 0; right: 0; bottom: 0; display: flex; border-radius: 0; margin: 0; padding: 6px 8px calc(6px + var(--sab)); background: var(--card-solid); border: 0; border-top: 1px solid var(--border); }
+  .tabs .seg button { flex: 1; justify-content: center; min-height: 48px; border-radius: 12px; font-size: 13px; }
+  .tabs .spacer { display: none; }
+  #uiPill { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .grid.cols-4 { grid-template-columns: 1fr 1fr !important; gap: 10px; }
+  .card { padding: 14px; }
+  .stat-big { font-size: 22px; }
+  /* files: hide the Modified column, keep name + size */
+  .files table th:nth-child(3), .files table td:nth-child(3) { display: none; }
+  /* forwards table -> stacked cards */
+  #view table.list:not(.files table) thead { display: none; }
+  #view .card > table.list tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  #view .card > table.list td { border: 0; padding: 2px; }
+  #view .card > table.list td:first-child { grid-column: 1 / -1; }
+  #view .card > table.list td[style] { width: auto !important; }
+  .modal { max-width: 100% !important; }
+  .empty h1 { font-size: 24px; }
+}
+@media (max-width: 380px) { .grid.cols-4 { grid-template-columns: 1fr !important; } }

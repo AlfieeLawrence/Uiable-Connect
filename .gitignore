@@ -3,3 +3,26 @@ dist/
 build.log
 .DS_Store
 *.log
+
+# Mobile (Capacitor) build output
+mobile/node_modules/
+mobile/www/
+mobile/out/
+mobile/build/
+mobile/*.apk
+mobile/*.ipa
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/capacitor-cordova-android-plugins/build/
+mobile/android/app/src/main/assets/public/
+mobile/android/**/*.jks
+mobile/android/**/*.keystore
+mobile/ios/App/App/public/
+mobile/ios/App/Pods/
+mobile/ios/App/build/
+mobile/ios/DerivedData/
+mobile/ios/**/xcuserdata/
+mobile/plugin/android/build/
+mobile/plugin/.build/

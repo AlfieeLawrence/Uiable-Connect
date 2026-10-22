@@ -1,0 +1,27 @@
+ext {
+    capacitorVersion = project.hasProperty('capacitorVersion') ? rootProject.ext.capacitorVersion : '6.2.0'
+}
+buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies { classpath 'com.android.tools.build:gradle:8.2.1' }
+}
+apply plugin: 'com.android.library'
+android {
+    namespace "com.alfie.uiablessh"
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 34
+    defaultConfig {
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 22
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 34
+    }
+    buildTypes { release { minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    lintOptions { abortOnError false }
+}
+repositories { google(); mavenCentral() }
+dependencies {
+    implementation project(':capacitor-android')
+    // JSch (maintained fork): ed25519/ecdsa/rsa-sha2 keys, OpenSSH + PEM key files, SFTP, direct-tcpip
+    implementation 'com.github.mwiede:jsch:0.2.20'
+    // EdDSA / modern crypto for Android's JCA
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
+}

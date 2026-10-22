@@ -1,0 +1,9 @@
+{
+  "appId": "com.alfie.uiableconnect",
+  "appName": "Uiable Connect",
+  "webDir": "www",
+  "backgroundColor": "#0b0d14",
+  "android": { "allowMixedContent": true },
+  "ios": { "contentInset": "never", "backgroundColor": "#0b0d14" },
+  "server": { "androidScheme": "https", "cleartext": true }
+}
