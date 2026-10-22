@@ -139,6 +139,7 @@ jobs:
       - uses: docker/login-action@v3
         with: { registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}' }
       - uses: docker/build-push-action@v6
+        env: { DOCKER_BUILD_RECORD_UPLOAD: 'false', DOCKER_BUILD_SUMMARY: 'false' }
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -161,7 +162,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: artifacts, merge-multiple: true }
+        # Only the app builds (the docker job's build-record artifact must not be merged in)
+        with: { path: artifacts, merge-multiple: true, pattern: '{windows,mac,android,ios}' }
       - run: ls -la artifacts
       - uses: softprops/action-gh-release@v2
         with:
