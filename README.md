@@ -23,7 +23,36 @@ an **Open Uiable dashboard** button appears and starts the tunnel to localhost:8
 - **Files:** browse, drag and drop files or folders from Explorer to upload, Download (files or folders), New folder or file, Rename, Delete, and double-click to edit text files (Ctrl+S saves).
 - **Forwards:** a built-in "Uiable dashboard" forward (PC 8080 → server 127.0.0.1:8080), plus your own (server host and port → PC port).
   You can start or stop each one, or set it to start automatically on connect. If a PC port is already in use, you're warned instead of it failing silently.
+- **Editor:** a small built-in editor for text files up to 2 MB (binary files are refused), with line numbers, Ctrl/Cmd+S to save and a warning about unsaved changes. Full screen on phones.
+- **Copy and paste:** on Mac, Cmd+C/Cmd+V work in the terminal. On Windows and Linux use Ctrl+Shift+C/V (or Ctrl+Insert/Shift+Insert). Right-click the terminal for Copy, Paste, Select all and Clear.
+- **Alerts:** rules for CPU, RAM, disk, load, swap and disconnects, each with a threshold, a "for N seconds" duration and a cooldown. Rules are saved per server. They're only checked while the app is running and connected, and they show a system notification plus an in-app message.
+- **Health:** read-only checks for open ports, firewall, pending updates, reboot required, Docker images, SSH config, disk and inodes, and failed services. Nothing changes on the server. Missing tools or no sudo show as "?". **Refresh package lists** runs `apt update` (or the dnf/apk equivalent) only when you tap it, and it needs sudo.
+- **Host keys:** on first connect you see the server's SHA256 fingerprint and confirm it. If the key changes later, the connection is blocked with a warning and a **Trust new key** option.
+- **Snippets:** saved commands, global or per server. Run one in the open terminal, or as a one-off with the output shown.
+- **Encrypted backup:** export servers, forwards, alerts, snippets and secrets to a password-protected `.ucbackup` file (AES-256-GCM, PBKDF2 with 600k iterations). Import it on any desktop, mobile or Docker copy, and choose Merge or Replace.
+- **Install / Update Uiable:** detects whether Uiable is installed, which version is running and the latest release. It then offers Install, Update to X or Up to date. After you confirm, it runs as a detached job on the server and streams the log live. Root access is needed. If your user needs a sudo password, you're asked for it in the app: it goes to sudo on stdin and is never logged or saved. Updates keep accounts and data volumes, and a backup of `/opt/uiable` is written to `/opt/uiable.backup-<date>.tar.gz` first.
+  If Docker isn't installed, it's installed first, and the confirmation says so. This uses get.docker.com on Debian, Ubuntu, Raspbian, Fedora, CentOS and RHEL, apk on Alpine, or pacman on Arch. The service is then started and your user is added to the docker group. Other systems stop with a message. An existing Docker install is never changed.
 - You can connect to several servers at once.
+
+## macOS: "app is damaged" or "can't be opened"
+The Mac build is ad-hoc signed but **not notarized** by Apple, so Gatekeeper blocks it the first time. Do one of these once:
+- In Terminal, run `xattr -cr "/Applications/Uiable Connect.app"`, then open the app normally. Or:
+- Try to open the app, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
+
+## Docker (web version in your browser)
+This is the same app, served by a small Node container. Your SSH connections run inside the container.
+```sh
+curl -O https://raw.githubusercontent.com/AlfieeLawrence/uiable-connect/main/docker-compose.yml
+docker compose up -d     # then open http://127.0.0.1:8484
+```
+Or with plain Docker: `docker run -d -p 127.0.0.1:8484:8484 -p 127.0.0.1:8080-8090:8080-8090 -v uc-data:/data ghcr.io/alfieelawrence/uiable-connect:latest` (images for amd64 and arm64).
+- **Data:** everything is stored in the `/data` volume. Passwords and keys are encrypted with a key kept in that volume (`/data/secret.key`), or with your own key from `UC_SECRET`.
+- **Login:** set `UC_PASSWORD` to require a password. If it isn't set, the container prints a warning, and the compose file only listens on 127.0.0.1 for that reason. Don't publish it to the network without a password, and preferably put it behind HTTPS.
+- **Other hostnames:** requests for any host except localhost are refused (this protects against DNS rebinding) unless `UC_PASSWORD` is set or the host is listed in `UC_ALLOWED_HOSTS=uc.example.com,192.168.1.5`.
+- **Forwards:** a forward's local port has to be inside the published range 8080-8090, so the Uiable dashboard forward on 8080 works as is. Open it at `http://127.0.0.1:<port>`.
+- **Alerts** use browser notifications (allow them when asked).
+- **Backups and other crypto features need a secure context.** That means `http://localhost`/`127.0.0.1`, or HTTPS. A plain `http://LAN-IP` won't work for those.
+- **Updating:** `docker compose pull && docker compose up -d`. Your data stays in the volume.
 
 ## Build it yourself
 - **Windows:** double-click `build-windows.bat`. The app lands in `dist\`.

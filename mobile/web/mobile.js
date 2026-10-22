@@ -27,7 +27,7 @@
     return send0(ch, id, sid, d, ...r);
   };
   const setCtrl = v => { ctrl = v; document.querySelectorAll('.kx [data-k="ctrl"]').forEach(b => b.classList.toggle('active', v)); };
-  const KEYS = [['Esc', '\x1b'], ['Tab', '\t'], ['Ctrl', 'ctrl'], ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['←', '\x1b[D'], ['→', '\x1b[C'], ['|', '|'], ['~', '~'], ['/', '/'], ['-', '-'], ['^C', '\x03']];
+  const KEYS = [['Esc', '\x1b'], ['Tab', '\t'], ['Ctrl', 'ctrl'], ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['←', '\x1b[D'], ['→', '\x1b[C'], ['|', '|'], ['~', '~'], ['/', '/'], ['-', '-'], ['^C', '\x03'], ['Paste', 'paste']];
   function termExtras(v) {
     if (v.querySelector('.kx')) return;
     const row = document.createElement('div'); row.className = 'kx';
@@ -35,6 +35,7 @@
     row.addEventListener('pointerdown', e => e.preventDefault()); // keep the on-screen keyboard open
     row.onclick = e => { const b = e.target.closest('button'); if (!b) return; const k = decodeURIComponent(b.dataset.s);
       if (k === 'ctrl') return setCtrl(!ctrl);
+      if (k === 'paste') { const t = S(cur).terms.find(t => t.sid === S(cur).activeTerm); if (t) navigator.clipboard.readText().then(x => x && t.term.paste(x), () => toast('Clipboard not available', true)); return; }
       const u = S(cur); const sid = u.activeTerm; if (!sid) return; send0('shell:write', cur, sid, k); u.terms.find(t => t.sid === sid)?.term.focus(); };
     v.querySelector('.termwrap').append(row);
   }

@@ -29,3 +29,38 @@ table.list input { padding: 5px 8px; }
 .prog { position: fixed; left: 268px; bottom: 18px; } 
 
 #updBar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 150; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; background: var(--card-solid); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow); font-size: 13px; max-width: calc(100vw - 24px); }
+
+/* ---------- editor (v1.2) */
+.editor-modal { width: min(1100px, 96vw); }
+.editor-modal .ed-body { padding: 0 !important; display: flex; min-height: 0; overflow: hidden !important; flex: 1; }
+.ed { flex: 1; display: flex; min-height: 0; min-width: 0; background: var(--input); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.ed-gut, .ed-ta { font-family: var(--mono); font-size: 13px; line-height: 1.55; margin: 0; padding-top: 10px; }
+.ed-gut { min-width: 3.2em; padding: 10px 10px 40px 8px; text-align: right; color: var(--muted); opacity: .55; overflow: hidden; user-select: none; white-space: pre; border-right: 1px solid var(--border); flex-shrink: 0; }
+.ed-ta { flex: 1; min-width: 0; height: auto !important; min-height: 0; border: 0 !important; box-shadow: none !important; outline: none; resize: none; background: transparent; border-radius: 0; padding: 10px 12px 10px 10px; white-space: pre; overflow: auto; tab-size: 4; overflow-wrap: normal; }
+.ed-path { max-width: 45%; } .ed-dirty { color: var(--warn); }
+.editor-modal footer { align-items: center; }
+/* ---------- terminal context menu */
+.ctx { position: fixed; z-index: 1000; min-width: 160px; background: var(--card-solid); border: 1px solid var(--border); border-radius: 10px; padding: 4px; box-shadow: 0 10px 30px rgba(0,0,0,.35); display: flex; flex-direction: column; }
+.ctx button { border: 0; background: transparent; border-radius: 6px; justify-content: flex-start; padding: 7px 12px; }
+.ctx button:hover:not(:disabled) { background: var(--input); } .ctx button:disabled { opacity: .4; cursor: default; }
+/* ---------- health */
+.hlist { display: flex; flex-direction: column; gap: 6px; }
+.hitem { border: 1px solid var(--border); border-radius: 10px; background: var(--input); }
+.hitem summary { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; flex-wrap: wrap; }
+.hitem summary::-webkit-details-marker { display: none; }
+.hitem ul { margin: 0; padding: 0 14px 10px 34px; max-height: 260px; overflow: auto; } .hitem > p { margin: 0; padding: 0 14px 10px; }
+.hsum { flex: 1 1 260px; min-width: 0; }
+.hs { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 99px; min-width: 44px; text-align: center; background: var(--border); color: var(--muted); }
+.hs.ok { background: rgba(34,197,94,.15); color: var(--ok); } .hs.warn { background: rgba(245,158,11,.16); color: var(--warn); } .hs.fail { background: rgba(239,68,68,.16); color: var(--danger); }
+.hitem.fail { border-color: rgba(239,68,68,.35); } .hitem.warn { border-color: rgba(245,158,11,.3); }
+/* ---------- alerts */
+.alist { display: flex; flex-direction: column; gap: 6px; }
+.arule { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--input); }
+.arule.off { opacity: .6; }
+.atog { display: flex; align-items: center; gap: 8px; min-width: 220px; cursor: pointer; }
+.aopts { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; } .aopts > span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.aopts input[type=number] { padding: 5px 8px; } .aopts select { width: auto; padding: 5px 8px; }
+.uilog { background: #07080d; color: #d6d8e0; border-radius: 8px; padding: 10px; max-height: 46vh; min-height: 120px; overflow: auto; white-space: pre-wrap; margin-top: 10px; }
+.slist { display: flex; flex-direction: column; gap: 6px; }
+.snip { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--input); flex-wrap: wrap; }
+.side-foot { display: flex; gap: 6px; } .side-foot > :first-child { flex: 1; }

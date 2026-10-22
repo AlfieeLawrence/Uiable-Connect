@@ -27,7 +27,7 @@ public class UiableSshPlugin: CAPPlugin, CAPBridgedPlugin {
     }
     private func auth(_ c: CAPPluginCall) -> SshAuth {
         SshAuth(host: c.getString("host") ?? "", port: c.getInt("port") ?? 22, username: c.getString("username") ?? "",
-                password: c.getString("password"), privateKey: c.getString("privateKey"), passphrase: c.getString("passphrase"))
+                password: c.getString("password"), privateKey: c.getString("privateKey"), passphrase: c.getString("passphrase"), hostKey: c.getString("hostKey"))
     }
     private func id(_ c: CAPPluginCall) -> String { c.getString("id") ?? "" }
 

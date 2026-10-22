@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { Session, testConnection } = require('./lib/core');
@@ -9,7 +9,11 @@ const { Store } = require('./lib/store');
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,SpareRendererForSitePerProcess');
 if (!app.requestSingleInstanceLock()) app.quit();
-Menu.setApplicationMenu(null);
+// macOS needs an Edit menu for Cmd+C/V/X/A to work at all; no Reload item so a stray Cmd+R can't drop sessions.
+if (process.platform === 'darwin') Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' },
+  { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] }, { role: 'windowMenu' }]));
+else Menu.setApplicationMenu(null);
+if (process.platform === 'win32') app.setAppUserModelId('com.alfie.uiableconnect'); // needed for Windows toast notifications
 
 let win, store; const sessions = new Map(); // serverId -> Session
 const enc = s => safeStorage.isEncryptionAvailable() ? 'e:' + safeStorage.encryptString(s).toString('base64') : 'p:' + Buffer.from(s).toString('base64');
@@ -22,6 +26,11 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false, spellcheck: false, backgroundThrottling: true } });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  // native right-click menu for text fields and selected text (the terminal has its own menu)
+  win.webContents.on('context-menu', (_e, p) => { const t = p.isEditable
+    ? [{ role: 'cut', enabled: p.editFlags.canCut }, { role: 'copy', enabled: p.editFlags.canCopy }, { role: 'paste', enabled: p.editFlags.canPaste }, { type: 'separator' }, { role: 'selectAll' }]
+    : p.selectionText ? [{ role: 'copy' }] : [];
+    if (t.length) Menu.buildFromTemplate(t).popup({ window: win }); });
   if (process.env.UC_SHOT) win.webContents.once('did-finish-load', () => require('./test/shots')(win, process.env.UC_SHOT));
 }
 
@@ -41,6 +50,14 @@ h('servers:list', () => store.list().map(s => ({ ...s, connected: sessions.has(s
 h('servers:save', s => store.upsert(s));
 h('servers:delete', id => { if (sessions.has(id)) sessions.get(id).end(); sessions.delete(id); store.remove(id); });
 h('servers:forwards', (id, fw) => store.setForwards(id, fw));
+h('servers:hostkey', (id, fp) => store.setHostKey(id, fp));
+h('snippets:list', () => store.snippets());
+h('snippets:save', l => store.setSnippets(l));
+h('backup:export', () => store.exportAll());
+h('backup:import', (d, mode) => { if (mode === 'replace') { for (const s of sessions.values()) s.end(); sessions.clear(); } return store.importAll(d, mode); });
+h('file:save', async (name, text) => { const r = await dialog.showSaveDialog(win, { title: 'Save backup', defaultPath: path.join(app.getPath('documents'), path.basename(String(name))), filters: [{ name: 'Uiable Connect backup', extensions: ['ucbackup'] }] });
+  if (r.canceled || !r.filePath) return null; fs.writeFileSync(r.filePath, String(text), { mode: 0o600 }); return r.filePath; });
+h('servers:alerts', (id, rules) => store.setAlerts(id, rules));
 h('servers:test', async (s) => { // merge saved secrets if editing and fields left blank
   let full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase']) if (!full[k]) full[k] = saved[k]; }
   return testConnection(full);
@@ -61,6 +78,11 @@ h('fwd:start', (id, f) => S(id).startForward(f));
 h('fwd:stop', (id, fid) => S(id).stopForward(fid));
 h('fwd:check', (port) => new Session({}).checkLocalPort(Number(port)));
 h('stats', id => S(id).stats());
+h('exec', (id, cmd, timeout) => S(id).exec(String(cmd), { timeout: Math.min(Number(timeout) || 20000, 180000) }));
+h('notify:permission', () => Notification.isSupported());
+h('notify', ({ title, body }) => { if (!Notification.isSupported()) return false;
+  const n = new Notification({ title: String(title || 'Uiable Connect'), body: String(body || '') });
+  n.on('click', () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } }); n.show(); return true; });
 h('uiable:detect', (id, port) => S(id).detectUiable(port || 8080));
 h('uiable:open', async (id, mode) => {
   const s = S(id); const srv = store.list().find(x => x.id === id);
@@ -76,6 +98,10 @@ h('app:update', async () => {
   const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
   if (!r.ok) return null; const j = await r.json(); return { current: app.getVersion(), latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url };
 });
+const latestUiable = async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) return null; const j = await r.json(); const a = (j.assets || []).find(x => x.name === 'uiable.zip');
+  return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; };
+h('uiable:latest', latestUiable);
 h('app:version', () => app.getVersion());
 h('app:open', url => { if (/^https:\/\/github\.com\//.test(url)) shell.openExternal(url); });
 h('shell:open', (id, sid, c, r) => S(id).openShell(sid, c, r));

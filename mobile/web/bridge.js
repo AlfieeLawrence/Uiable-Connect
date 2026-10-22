@@ -33,7 +33,7 @@
   // ---------- sessions (JS-side state; the native side owns the sockets)
   const sessions = new Map(); // id -> { forwards: Map(fid -> status), prev }
   const S = id => { const s = sessions.get(id); if (!s) throw new Error('Not connected'); return s; };
-  const auth = s => ({ host: s.host, port: Number(s.port) || 22, username: s.username,
+  const auth = s => ({ host: s.host, port: Number(s.port) || 22, username: s.username, hostKey: s.hostKey || '',
     ...(s.auth === 'key' ? { privateKey: s.privateKey || '', passphrase: s.passphrase || '' } : { password: s.password || '' }) });
   const sh = p => "'" + String(p).replace(/'/g, `'\\''`) + "'";
   const exec = (id, cmd, timeout = 20000) => Ssh.exec({ id, cmd, timeout });
@@ -74,13 +74,36 @@
     'servers:list': async () => { await load(); return data.servers.map(s => ({ ...pub(s), connected: sessions.has(s.id), fwdStatus: sessions.has(s.id) ? (s.forwards || []).map(f => fwdStatus(s.id, f.id)) : [] })); },
     'servers:save': async inp => { await load(); let s = data.servers.find(x => x.id === inp.id);
       if (!s) { s = { id: uuid(), forwards: [DEFAULT_FWD()] }; data.servers.push(s); }
-      for (const k of ['name', 'host', 'port', 'username', 'auth', 'keyName', 'color']) if (k in inp) s[k] = inp[k];
+      for (const k of ['name', 'host', 'port', 'username', 'auth', 'keyName', 'color', 'hostKey']) if (k in inp) s[k] = inp[k];
       s.port = Number(s.port) || 22;
       for (const k of SECRET) { if (inp[k] === null) delete s[k]; else if (typeof inp[k] === 'string' && inp[k] !== '') s[k] = inp[k]; }
       if (s.auth === 'password') { delete s.privateKey; delete s.passphrase; delete s.keyName; } else delete s.password;
       await save(); return s.id; },
     'servers:delete': async id => { await load(); if (sessions.has(id)) await H['conn:disconnect'](id); data.servers = data.servers.filter(s => s.id !== id); await save(); },
     'servers:forwards': async (id, fw) => { await load(); const s = data.servers.find(x => x.id === id); s.forwards = fw.map(f => ({ ...f, localPort: Number(f.localPort), remotePort: Number(f.remotePort) })); await save(); },
+    'servers:hostkey': async (id, fp) => { await load(); const s = data.servers.find(x => x.id === id); if (!s) throw new Error('Server not found'); s.hostKey = String(fp); await save(); },
+    'snippets:list': async () => { await load(); return data.snippets || []; },
+    'snippets:save': async l => { await load(); data.snippets = (l || []).map(x => ({ id: String(x.id), name: String(x.name || ''), cmd: String(x.cmd || ''), serverId: x.serverId || null })); await save(); },
+    'backup:export': async () => { await load(); return { servers: data.servers.map(s => ({ ...s })), snippets: data.snippets || [] }; },
+    'backup:import': async (d, mode) => { await load(); const conv = s => { const o = { ...s }; for (const k of Object.keys(o)) if (k.startsWith('has_') || k === 'connected' || k === 'fwdStatus') delete o[k];
+        o.id = String(o.id || uuid()); o.port = Number(o.port) || 22; o.forwards = Array.isArray(o.forwards) ? o.forwards : []; return o; };
+      const inc = d.servers.map(conv), sn = (d.snippets || []).map(x => ({ id: String(x.id), name: String(x.name || ''), cmd: String(x.cmd || ''), serverId: x.serverId || null }));
+      if (mode === 'replace') { for (const id of [...sessions.keys()]) await H['conn:disconnect'](id); data.servers = inc; data.snippets = sn; }
+      else { for (const s of inc) { const i = data.servers.findIndex(x => x.id === s.id); if (i >= 0) data.servers[i] = s; else data.servers.push(s); }
+        const cur = data.snippets || []; for (const x of sn) { const i = cur.findIndex(y => y.id === x.id); if (i >= 0) cur[i] = x; else cur.push(x); } data.snippets = cur; }
+      await save(); return inc.length; },
+    // backups: written to the app cache then handed to the share sheet (Save to Files, Drive, AirDrop...)
+    'file:save': async (name, text) => { const FS = P.Filesystem; if (!FS) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text])); a.download = name; a.click(); return name; }
+      await FS.writeFile({ path: name, data: text, directory: 'CACHE', encoding: 'utf8' }); const { uri } = await FS.getUri({ path: name, directory: 'CACHE' });
+      await P.Share.share({ title: 'Save backup', files: [uri] }); return name; },
+    'servers:alerts': async (id, rules) => { await load(); const s = data.servers.find(x => x.id === id); if (!s) throw new Error('Server not found');
+      s.alerts = rules.map(r => ({ ...r, threshold: Number(r.threshold) || 0, forSec: Number(r.forSec) || 0, cooldownMin: Number(r.cooldownMin) || 0, enabled: !!r.enabled })); await save(); },
+    'exec': (id, cmd, timeout) => { S(id); return exec(id, String(cmd), Math.min(Number(timeout) || 20000, 180000)); },
+    // alerts -> @capacitor/local-notifications (shows while the app is open/backgrounded; the app does not poll when it's closed)
+    'notify:permission': async () => { const LN = P.LocalNotifications; if (!LN) return false; const r = await LN.requestPermissions(); return r.display === 'granted'; },
+    'notify': async ({ title, body }) => { const LN = P.LocalNotifications; if (!LN) return false;
+      const p = await LN.checkPermissions(); if (p.display !== 'granted' && (await LN.requestPermissions()).display !== 'granted') return false;
+      await LN.schedule({ notifications: [{ id: Math.floor(Math.random() * 2e9), title: String(title || 'Uiable Connect'), body: String(body || '') }] }); return true; },
     'servers:test': async s => { await load(); const f = { ...s }; if (s.id) { const saved = full(s.id); for (const k of SECRET) if (!f[k]) f[k] = saved[k]; }
       const r = await Ssh.test(auth(f)); return { ok: true, info: r.info }; },
     'key:pick': () => new Promise(res => { const i = document.createElement('input'); i.type = 'file';
@@ -105,6 +128,9 @@
       return url; },
     'app:update': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
       if (!r.ok) return null; const j = await r.json(); return { current: window.UC_VERSION || '0.0.0', latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url }; },
+    'uiable:latest': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return null; const j = await r.json(); const a = (j.assets || []).find(x => x.name === 'uiable.zip');
+      return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; },
     'app:version': async () => window.UC_VERSION || '0.0.0',
     'app:open': async url => { if (!/^https:\/\/github\.com\//.test(url)) return; if (native && P.Browser) await P.Browser.open({ url }); else window.open(url); },
     'shell:open': async (id, sid, cols, rows) => { S(id); await Ssh.shellOpen({ id, sid, cols, rows }); return sid; },

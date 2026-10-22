@@ -20,6 +20,43 @@ function renderSide() {
     n.onclick = () => { cur = s.id; renderSide(); renderMain(); }; $('#srvlist').append(n);
   }
 }
+// ---------- clipboard (Electron: native clipboard via preload; browser/mobile: navigator.clipboard)
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const clip = { read: async () => uc.clip ? uc.clip.read() : navigator.clipboard.readText(), write: async t => uc.clip ? uc.clip.write(t) : navigator.clipboard.writeText(t) };
+function ctxMenu(x, y, items) {
+  $('#ctx')?.remove(); const m = el('<div id="ctx" class="ctx"></div>');
+  for (const [label, fn, off] of items) { const b = el(`<button ${off ? 'disabled' : ''}>${label}</button>`); b.onclick = () => { m.remove(); Promise.resolve(fn()).catch(e => toast(e.message || 'Clipboard not available', true)); }; m.append(b); }
+  document.body.append(m); m.style.left = Math.min(x, innerWidth - m.offsetWidth - 4) + 'px'; m.style.top = Math.min(y, innerHeight - m.offsetHeight - 4) + 'px';
+  const close = e => { if (e.type === 'keydown' ? e.key === 'Escape' : !m.contains(e.target)) { m.remove(); off(); } };
+  const off = () => { document.removeEventListener('pointerdown', close, true); document.removeEventListener('keydown', close, true); };
+  setTimeout(() => { document.addEventListener('pointerdown', close, true); document.addEventListener('keydown', close, true); });
+}
+// Mac: Cmd+C copies, Cmd+V pastes (via the Edit menu's paste role -> native paste event). Win/Linux: Ctrl+Shift+C/V,
+// Ctrl+Insert / Shift+Insert. Plain Ctrl+C still sends ^C to the server. Right-click menu everywhere.
+function termClipboard(term, node) {
+  const paste = () => clip.read().then(t => t && term.paste(t));
+  term.attachCustomKeyEventHandler(e => {
+    if (e.type !== 'keydown') return true; const k = e.key.toLowerCase();
+    if ((IS_MAC && e.metaKey && k === 'c') || (e.ctrlKey && e.shiftKey && k === 'c') || (e.ctrlKey && k === 'insert')) { const t = term.getSelection(); if (t) clip.write(t).catch(() => {}); e.preventDefault(); return false; }
+    if (IS_MAC && e.metaKey && k === 'v') return false; // browser/menu paste event -> xterm handles it once
+    if ((e.ctrlKey && e.shiftKey && k === 'v') || (e.shiftKey && k === 'insert')) { e.preventDefault(); paste().catch(() => {}); return false; }
+    if (IS_MAC && e.metaKey && k === 'a') { term.selectAll(); return false; }
+    return true;
+  });
+  node.addEventListener('contextmenu', e => { e.preventDefault(); const sel = term.getSelection();
+    ctxMenu(e.clientX, e.clientY, [['Copy', () => clip.write(sel), !sel], ['Paste', paste], ['Select all', () => term.selectAll()], ['Clear', () => term.clear()]]); });
+}
+
+// ---------- alerts: background stats poll for connected servers with enabled rules (every 10 s, app open only)
+function onStats(s, x) { const u = S(s.id); u.stats = x; u.statsAt = Date.now(); for (const m of evalAlerts(s, x)) raiseAlert(s, m); }
+setInterval(async () => {
+  for (const s of servers) {
+    const u = S(s.id); if (!s.connected || u.statsBusy || Date.now() - (u.statsAt || 0) < 9000) continue;
+    if (!rulesFor(s).some(r => r.enabled && r.metric !== 'disconnect')) continue;
+    u.statsBusy = true; try { onStats(s, await uc.call('stats', s.id)); } catch {} u.statsBusy = false;
+  }
+}, 10000);
+
 const curSrv = () => servers.find(s => s.id === cur);
 
 function renderMain() {
@@ -28,18 +65,31 @@ function renderMain() {
   const u = S(s.id);
   m.innerHTML = `<div class="row"><div class="grow"><h2 class="ellipsis">${esc(s.name || s.host)}</h2><div class="muted small mono">${esc(s.username)}@${esc(s.host)}:${s.port} · ${s.auth === 'key' ? 'SSH key' : 'password'}</div></div>
     <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : '<button class="primary" id="conn">Connect</button>'}</div>
-    <div class="tabs"><div class="seg">${['overview', 'terminal', 'files', 'forwards'].map(t => `<button data-t="${t}" class="${u.tab === t ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
+    <div class="tabs"><div class="seg">${['overview', 'terminal', 'files', 'forwards', 'health', 'alerts'].map(t => `<button data-t="${t}" class="${u.tab === t ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
     <div class="view" id="view"></div>`;
   $('#edit').onclick = () => editServer(s);
   if ($('#conn')) $('#conn').onclick = () => connect(s.id);
-  if ($('#disc')) $('#disc').onclick = async () => { await call('conn:disconnect', s.id); u.terms.forEach(t => t.term.dispose()); u.terms = []; u.uiable = null; refresh(); };
+  if ($('#disc')) $('#disc').onclick = async () => { u.userClosed = true; await call('conn:disconnect', s.id); u.terms.forEach(t => t.term.dispose()); u.terms = []; u.uiable = null; refresh(); };
   m.querySelectorAll('.tabs button[data-t]').forEach(b => b.onclick = () => { u.tab = b.dataset.t; renderMain(); });
   uiPill();
-  ({ overview: vOverview, terminal: vTerminal, files: vFiles, forwards: vForwards })[u.tab](s, u, $('#view'));
+  ({ overview: vOverview, terminal: vTerminal, files: vFiles, forwards: vForwards, health: vHealth, alerts: vAlerts })[u.tab](s, u, $('#view'));
 }
+// ---------- host keys: trust on first use. Backends refuse an unknown/changed key before sending any password or key.
+const hostKeyErr = e => { const m = /HOSTKEY_(UNKNOWN|CHANGED) (SHA256:\S+)/.exec(e && e.message || ''); return m && { changed: m[1] === 'CHANGED', fp: m[2] }; };
+function trustPrompt(s, k) { return new Promise(res => {
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:560px"><header><h3 class="grow">${k.changed ? '⚠ Host key changed' : 'Trust this server?'}</h3></header><div class="body">
+    ${k.changed ? `<p class="pill err" style="display:block">The host key of <b>${esc(s.host)}</b> is different from the one you trusted before. This happens after a reinstall or a new server at that address, but it can also mean someone is intercepting the connection. Nothing was sent.</p>`
+      : `<p>First connection to <b>${esc(s.host)}</b>. Check the fingerprint matches the server (run <code class="mono">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on it), then trust it.</p>`}
+    <p class="muted small" style="margin-bottom:4px">${k.changed ? 'Previously trusted' : ''}</p>${k.changed ? `<p class="mono small" style="overflow-wrap:anywhere">${esc(s.hostKey || '')}</p><p class="muted small" style="margin-bottom:4px">Now offered</p>` : '<p class="muted small" style="margin-bottom:4px">SHA256 fingerprint</p>'}
+    <p class="mono" style="overflow-wrap:anywhere;font-size:14px">${esc(k.fp)}</p></div>
+    <footer><span class="spacer"></span><button id="c">Cancel</button><button class="${k.changed ? 'danger' : 'primary'}" id="ok">${k.changed ? 'Trust new key' : 'Trust and connect'}</button></footer></div></div>`);
+  document.body.append(m); m.querySelector('#c').onclick = () => { m.remove(); res(false); }; m.querySelector('#ok').onclick = () => { m.remove(); res(true); }; }); }
 async function connect(id) {
   const b = $('#conn'); if (b) { b.disabled = true; b.textContent = 'Connecting…'; }
-  try { await uc.call('conn:connect', id); S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); }
+  try { try { await uc.call('conn:connect', id); }
+    catch (e) { const k = hostKeyErr(e); if (!k) throw e; const s = servers.find(x => x.id === id) || {};
+      if (!await trustPrompt(s, k)) { refresh(); return; } await call('servers:hostkey', id, k.fp); await uc.call('conn:connect', id); }
+    S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); }
   catch (e) { toast('Could not connect: ' + e.message, true); }
   refresh();
 }
@@ -50,6 +100,7 @@ function uiPill() {
   p.innerHTML = u.uiable.reachable
     ? `<span class="pill ok">● ${u.uiable.isUiable ? 'Uiable' : esc(u.uiable.title || 'Web app')} on :${u.uiable.port}</span> <button class="primary sm" id="openUi">Open Uiable dashboard</button> <button class="sm" id="openUiB" title="Open in your browser">Browser</button>`
     : `<span class="pill">Uiable not found on this server · SSH features only</span>`;
+  p.insertAdjacentHTML('beforeend', ' <span id="uiInst"></span>'); uiInstallButton(s, u);
   if ($('#openUi')) { $('#openUi').onclick = () => openUi('window'); $('#openUiB').onclick = () => openUi('browser'); }
 }
 async function openUi(mode) { const url = await call('uiable:open', cur, mode); toast('Tunnel up: ' + url); refresh(); }
@@ -69,7 +120,7 @@ function vOverview(s, u, v) {
       <div class="card"><div class="card-title">Uiable</div><p class="small">${u.uiable?.reachable ? 'Dashboard is running on the server. Use <b>Open Uiable dashboard</b> above.' : 'Not installed (or not on port 8080). Terminal, Files and Forwards still work over plain SSH.'}</p></div>
     </div><div class="card" style="margin-top:16px"><div class="card-title">Storage</div>${x.disks.map(d => { const p = pct(d.used, d.size); return `<div style="margin-bottom:12px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${fmtB(d.used)} / ${fmtB(d.size)} · ${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted">No disks reported</p>'}</div>`;
   };
-  const tick = async () => { if (cur !== s.id || S(s.id).tab !== 'overview') return; try { u.stats = await uc.call('stats', s.id); } catch {} if (cur === s.id && u.tab === 'overview') { draw(); statsTimer = setTimeout(tick, document.hidden ? 15000 : 3000); } };
+  const tick = async () => { if (cur !== s.id || S(s.id).tab !== 'overview') return; if (!u.statsBusy) { u.statsBusy = true; try { onStats(s, await uc.call('stats', s.id)); } catch {} u.statsBusy = false; } if (cur === s.id && u.tab === 'overview') { draw(); statsTimer = setTimeout(tick, document.hidden ? 15000 : 3000); } };
   draw(); tick();
 }
 const notConn = s => `<div class="empty"><div><p class="muted">Not connected.</p><button class="primary" data-act="connect" data-id="${s.id}">Connect</button></div></div>`;
@@ -77,7 +128,7 @@ const notConn = s => `<div class="empty"><div><p class="muted">Not connected.</p
 // ---------- Terminal (tabs persist while connected)
 function vTerminal(s, u, v) {
   if (!s.connected) { v.innerHTML = notConn(s); return; }
-  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT">+ New tab</button></div><div class="termhost" id="th"></div></div>`;
+  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT">+ New tab</button><button class="sm" id="snipB" title="Saved commands">⌘ Snippets</button></div><div class="termhost" id="th"></div></div>`;
   const draw = () => {
     $('#ttabs').innerHTML = u.terms.map((t, i) => `<button class="${t.sid === u.activeTerm ? 'active' : ''}" data-s="${t.sid}">Tab ${i + 1} <span data-x="${t.sid}" style="opacity:.6">✕</span></button>`).join('');
     $('#ttabs').querySelectorAll('button').forEach(b => b.onclick = (e) => { if (e.target.dataset.x) { uc.send('shell:close', s.id, e.target.dataset.x); return; } u.activeTerm = b.dataset.s; show(); });
@@ -90,11 +141,12 @@ function vTerminal(s, u, v) {
     const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
     $('#th').append(node); term.open(node); fit.fit();
     term.onData(d => uc.send('shell:write', s.id, sid, d));
+    termClipboard(term, node);
     term.onResize(({ cols, rows }) => uc.send('shell:resize', s.id, sid, cols, rows));
     u.terms.push({ sid, term, fit, node }); u.activeTerm = sid;
     await call('shell:open', s.id, sid, term.cols, term.rows); show();
   };
-  $('#newT').onclick = newT; u.redrawTerms = show;
+  $('#newT').onclick = newT; u.redrawTerms = show; $('#snipB').onclick = () => snippetsDialog(s, u);
   if (!u.terms.length) newT(); else show();
 }
 uc.on(d => {
@@ -102,7 +154,8 @@ uc.on(d => {
   if (d.ev === 'shell-data') u.terms.find(t => t.sid === d.sid)?.term.write(d.data);
   else if (d.ev === 'shell-exit') { const i = u.terms.findIndex(t => t.sid === d.sid); if (i >= 0) { u.terms[i].term.dispose(); u.terms[i].node.remove(); u.terms.splice(i, 1); }
     if (u.activeTerm === d.sid) u.activeTerm = u.terms[0]?.sid; if (cur === d.id && u.tab === 'terminal') u.redrawTerms?.(); }
-  else if (d.ev === 'closed') { toast('Connection closed', true); u.terms = []; refresh(); }
+  else if (d.ev === 'closed') { const s = servers.find(x => x.id === d.id); const r = s && rulesFor(s).find(x => x.metric === 'disconnect');
+    if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = []; refresh(); }
   else if (d.ev === 'progress') { let p = $('#prog'); if (!p) { p = el('<div id="prog" class="pill prog"></div>'); document.body.append(p); } p.textContent = `${d.name} ${Math.round(100 * d.t / (d.tot || 1))}%`; clearTimeout(p._t); p._t = setTimeout(() => p.remove(), 1500); }
   else if (d.ev === 'toast') toast(d.message, true);
 });
@@ -142,14 +195,6 @@ async function vFiles(s, u, v) {
   card.ondrop = async e => { e.preventDefault(); dragN = 0; drop.classList.add('hidden'); const paths = [...e.dataTransfer.files].map(f => uc.pathFor(f)).filter(Boolean);
     if (!paths.length) return; await call('fs:upload', s.id, paths, u.cwd); toast(`Uploaded ${paths.length} item(s)`); load(); };
   load();
-}
-async function editFile(id, p) {
-  let txt; try { txt = await uc.call('fs:read', id, p); } catch (e) { return toast(e.message, true); }
-  const m = el(`<div class="modal-bg"><div class="modal full"><header><h3 class="grow mono ellipsis">${esc(p)}</h3></header><div class="body"><textarea class="editor" spellcheck="false"></textarea></div><footer><button id="c">Close</button><button class="primary" id="sv">Save (Ctrl+S)</button></footer></div></div>`);
-  document.body.append(m); const ta = m.querySelector('textarea'); ta.value = txt; ta.focus();
-  const save = async () => { await call('fs:write', id, p, ta.value); txt = ta.value; toast('Saved'); };
-  ta.onkeydown = e => { if (e.key === 's' && e.ctrlKey) { e.preventDefault(); save(); } if (e.key === 'Tab') { e.preventDefault(); ta.setRangeText('\t', ta.selectionStart, ta.selectionEnd, 'end'); } };
-  m.querySelector('#sv').onclick = save; m.querySelector('#c').onclick = () => { if (ta.value !== txt && !confirm('Discard unsaved changes?')) return; m.remove(); };
 }
 function prompt2(title, val = '') { return new Promise(res => {
   const m = el(`<div class="modal-bg"><div class="modal"><header><h3>${esc(title)}</h3></header><div class="body"><input></div><footer><button id="c">Cancel</button><button class="primary" id="o">OK</button></footer></div></div>`);
@@ -197,15 +242,18 @@ function editServer(s = {}) {
   const setA = x => { a = x; m.querySelectorAll('[data-a]').forEach(b => b.classList.toggle('active', b.dataset.a === x)); m.querySelector('#pw').classList.toggle('hidden', x !== 'password'); m.querySelector('#ky').classList.toggle('hidden', x !== 'key'); };
   m.querySelectorAll('[data-a]').forEach(b => b.onclick = () => setA(b.dataset.a)); setA(auth);
   m.querySelector('#pick').onclick = async () => { const k = await call('key:pick'); if (k) { m.querySelector('#key').value = k.text; keyName = k.name; m.querySelector('#kn').textContent = k.name; } };
-  const val = () => ({ id: s.id, name: m.querySelector('#n').value.trim(), host: m.querySelector('#h').value.trim(), port: m.querySelector('#p').value, username: m.querySelector('#u').value.trim(), auth: a, keyName,
+  let hk = s.hostKey;
+  const val = () => ({ id: s.id, hostKey: hk, name: m.querySelector('#n').value.trim(), host: m.querySelector('#h').value.trim(), port: m.querySelector('#p').value, username: m.querySelector('#u').value.trim(), auth: a, keyName,
     password: m.querySelector('#pass').value, privateKey: m.querySelector('#key').value.trim() ? m.querySelector('#key').value.trim() + '\n' : '', passphrase: m.querySelector('#pp').value });
   m.querySelector('#c').onclick = () => m.remove();
   m.querySelector('#t').onclick = async () => { const tr = m.querySelector('#tr'); tr.innerHTML = '<span class="pill">Testing…</span>';
-    try { const r = await uc.call('servers:test', val()); tr.innerHTML = `<span class="pill ok">✓ Connected · ${esc(r.info)}</span>`; } catch (e) { tr.innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; } };
+    try { let r; try { r = await uc.call('servers:test', val()); } catch (e) { const k = hostKeyErr(e); if (!k) throw e;
+        if (!await trustPrompt({ ...val(), hostKey: hk }, k)) throw new Error('Host key not trusted'); hk = k.fp; r = await uc.call('servers:test', val()); } tr.innerHTML = `<span class="pill ok">✓ Connected · ${esc(r.info)}</span>`; } catch (e) { tr.innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; } };
   m.querySelector('#sv').onclick = async () => { const v = val(); if (!v.host || !v.username) return toast('Host and username are required', true); if (!v.name) v.name = v.host; cur = await call('servers:save', v); m.remove(); refresh(); };
-  if (s.id) m.querySelector('#del').onclick = async () => { if (!confirm(`Delete ${s.name}?`)) return; await call('servers:delete', s.id); delete st[s.id]; cur = null; m.remove(); refresh(); };
+  if (s.id) m.querySelector('#del').onclick = async () => { if (!confirm(`Delete ${s.name}?`)) return; S(s.id).userClosed = true; await call('servers:delete', s.id); delete st[s.id]; cur = null; m.remove(); refresh(); };
 }
 $('#addSrv').onclick = () => editServer();
+$('#bakB').onclick = () => backupDialog();
 document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
 refresh();
 

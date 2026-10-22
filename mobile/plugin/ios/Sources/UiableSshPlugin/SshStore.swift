@@ -5,9 +5,24 @@ import NIO
 import NIOSSH
 
 // Capacitor-free SSH core for iOS (also builds on Linux/macOS so it can be tested with `swift build`).
-struct SshAuth { let host: String; let port: Int; let username: String; let password: String?; let privateKey: String?; let passphrase: String? }
+struct SshAuth { let host: String; let port: Int; let username: String; let password: String?; let privateKey: String?; let passphrase: String?; var hostKey: String? = nil }
 struct ExecResult { let code: Int; let out: String; let err: String }
 struct SshError: LocalizedError { let message: String; var errorDescription: String? { message } }
+
+/// Trust on first use: accept only the fingerprint saved with the server (SHA256:base64, OpenSSH format, same as desktop/Android).
+final class TofuValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+    let expected: String; var seen: String?
+    init(_ e: String) { expected = e }
+    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let parts = String(openSSHPublicKey: hostKey).split(separator: " ")
+        guard parts.count >= 2, let blob = Data(base64Encoded: String(parts[1])) else {
+            validationCompletePromise.fail(SshError(message: "Couldn't read the server's host key")); return }
+        let fp = "SHA256:" + Data(SHA256.hash(data: blob)).base64EncodedString().replacingOccurrences(of: "=", with: "")
+        seen = fp
+        if !expected.isEmpty && expected == fp { validationCompletePromise.succeed(()) }
+        else { validationCompletePromise.fail(SshError(message: (expected.isEmpty ? "HOSTKEY_UNKNOWN " : "HOSTKEY_CHANGED ") + fp)) }
+    }
+}
 
 final class SshStore: @unchecked Sendable {
     var onShellData: ((String, String, String) -> Void)?
@@ -54,12 +69,14 @@ final class SshStore: @unchecked Sendable {
     }
     private static func open(_ a: SshAuth) async throws -> SSHClient {
         let m = try method(a)
+        let tofu = TofuValidator(a.hostKey ?? "")
         let isRsa = (a.privateKey ?? "").isEmpty == false && (try? Curve25519.Signing.PrivateKey(sshEd25519: a.privateKey!, decryptionKey: (a.passphrase?.isEmpty == false) ? Data(a.passphrase!.utf8) : nil)) == nil
         do {
             return try await SSHClient.connect(host: a.host, port: a.port, authenticationMethod: m,
-                                    hostKeyValidator: .acceptAnything(), // same as desktop: trust on first use
+                                    hostKeyValidator: .custom(tofu), // trust on first use, checked before auth
                                     reconnect: .never, connectTimeout: .seconds(15))
         } catch {
+            if let seen = tofu.seen, seen != (a.hostKey ?? "") { throw SshError(message: ((a.hostKey ?? "").isEmpty ? "HOSTKEY_UNKNOWN " : "HOSTKEY_CHANGED ") + seen) }
             // Citadel signs RSA with legacy ssh-rsa (SHA-1), which OpenSSH 8.8+ refuses by default.
             if isRsa && describe(error).contains("authentication") {
                 throw SshError(message: "The server refused this RSA key. On iPhone/iPad use an ed25519 key (ssh-keygen -t ed25519) or a password")

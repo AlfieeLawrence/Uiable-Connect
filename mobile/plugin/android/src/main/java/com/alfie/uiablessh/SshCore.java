@@ -17,7 +17,7 @@ public class SshCore {
         void shellExit(String id, String sid);
         void closed(String id);
     }
-    public static class Auth { public String host, username, password, privateKey, passphrase; public int port = 22; }
+    public static class Auth { public String host, username, password, privateKey, passphrase; public int port = 22; public String hostKey; }
     public static class ExecResult { public int code; public String out, err; }
     public static class Entry { public String name; public long size, mtime; public int mode; }
 
@@ -30,7 +30,7 @@ public class SshCore {
     public SshCore(Events ev) { this.ev = ev; }
 
     private static Session open(Auth a) throws Exception {
-        JSch j = new JSch();
+        JSch j = new JSch(); Tofu tofu = new Tofu(a.hostKey); j.setHostKeyRepository(tofu);
         if (a.privateKey != null && !a.privateKey.isEmpty()) {
             byte[] pp = a.passphrase == null || a.passphrase.isEmpty() ? null : a.passphrase.getBytes(StandardCharsets.UTF_8);
             j.addIdentity("key", a.privateKey.getBytes(StandardCharsets.UTF_8), null, pp);
@@ -38,13 +38,31 @@ public class SshCore {
         Session s = j.getSession(a.username, a.host, a.port > 0 ? a.port : 22);
         if (a.password != null && !a.password.isEmpty()) s.setPassword(a.password);
         Properties c = new Properties();
-        c.put("StrictHostKeyChecking", "no"); // same behaviour as the desktop app (accept on first use)
+        c.put("StrictHostKeyChecking", "yes"); // checked by Tofu below against the saved fingerprint, before auth
         c.put("PreferredAuthentications", a.privateKey != null && !a.privateKey.isEmpty() ? "publickey" : "password,keyboard-interactive");
         s.setConfig(c);
         if (a.password != null) { final String pw = a.password; s.setUserInfo(new PwInfo(pw)); }
         s.setServerAliveInterval(20000); s.setServerAliveCountMax(3);
-        try { s.connect(15000); } catch (JSchException e) { throw new Exception(friendly(e)); }
+        try { s.connect(15000); } catch (JSchException e) {
+            if (tofu.seen != null && !tofu.seen.equals(a.hostKey)) throw new Exception((a.hostKey == null || a.hostKey.isEmpty() ? "HOSTKEY_UNKNOWN " : "HOSTKEY_CHANGED ") + tofu.seen);
+            throw new Exception(friendly(e)); }
         return s;
+    }
+    /** Trust on first use: only the fingerprint saved with the server (SHA256:base64, same format as OpenSSH/desktop) is accepted. */
+    static class Tofu implements HostKeyRepository {
+        final String expected; volatile String seen; Tofu(String e) { expected = e == null ? "" : e; }
+        public int check(String host, byte[] key) { seen = fp(key); return expected.isEmpty() ? NOT_INCLUDED : expected.equals(seen) ? OK : CHANGED; }
+        public void add(HostKey hk, UserInfo ui) {}
+        public void remove(String h, String t) {}
+        public void remove(String h, String t, byte[] k) {}
+        public String getKnownHostsRepositoryID() { return "uiable-connect"; }
+        public HostKey[] getHostKey() { return new HostKey[0]; }
+        public HostKey[] getHostKey(String h, String t) { return new HostKey[0]; }
+    }
+    static String fp(byte[] key) {
+        try { byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(key);
+            return "SHA256:" + android.util.Base64.encodeToString(d, android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING); }
+        catch (Exception e) { return "SHA256:?"; }
     }
     /** Answers password + keyboard-interactive prompts with the saved password. */
     static class PwInfo implements UserInfo, UIKeyboardInteractive {

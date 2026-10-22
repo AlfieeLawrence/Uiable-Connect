@@ -1,7 +1,8 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, clipboard } = require('electron');
 contextBridge.exposeInMainWorld('uc', {
   call: (ch, ...a) => ipcRenderer.invoke(ch, ...a).then(r => { if (!r.ok) throw new Error(r.error); return r.data; }),
   send: (ch, ...a) => ipcRenderer.send(ch, ...a),
   on: (fn) => ipcRenderer.on('ev', (_e, d) => fn(d)),
+  clip: { read: () => clipboard.readText(), write: t => clipboard.writeText(String(t)) },
   pathFor: (file) => webUtils.getPathForFile(file),
 });

@@ -1,0 +1,22 @@
+# Uiable Connect in Docker:  docker compose up -d   then open http://localhost:8484
+services:
+  uiable-connect:
+    image: ghcr.io/alfieelawrence/uiable-connect:latest
+    # build: .            # or build it from this folder
+    container_name: uiable-connect
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8484:8484"        # the web UI, only on this computer
+      # Port forwards (tunnels) listen inside the container. Publish the PC ports you use for them,
+      # e.g. the Uiable dashboard forward on 8080, and open http://localhost:8080 as usual.
+      - "127.0.0.1:8080-8090:8080-8090"
+    environment:
+      # UC_PASSWORD: "change-me"     # optional login; REQUIRED if you publish on anything but 127.0.0.1
+      # UC_SECRET: "long random string"  # optional: key for saved passwords (default: random key in the volume)
+      # UC_ALLOWED_HOSTS: "myhost.lan"   # extra host names allowed without UC_PASSWORD
+      TZ: Europe/London
+    volumes:
+      - uiable-connect-data:/data
+    mem_limit: 192m
+volumes:
+  uiable-connect-data:

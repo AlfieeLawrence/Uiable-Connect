@@ -34,7 +34,7 @@ public class UiableSshPlugin extends Plugin {
     private void bg(PluginCall call, Job j) { pool.execute(() -> { try { JSObject r = j.run(call); call.resolve(r == null ? new JSObject() : r); } catch (Exception e) { call.reject(SshCore.friendly(e)); } }); }
     private static SshCore.Auth auth(PluginCall c) {
         SshCore.Auth a = new SshCore.Auth(); a.host = c.getString("host"); a.port = c.getInt("port", 22); a.username = c.getString("username");
-        a.password = c.getString("password"); a.privateKey = c.getString("privateKey"); a.passphrase = c.getString("passphrase"); return a;
+        a.password = c.getString("password"); a.privateKey = c.getString("privateKey"); a.passphrase = c.getString("passphrase"); a.hostKey = c.getString("hostKey", ""); return a;
     }
     private static JSObject o(String k, Object v) { JSObject o = new JSObject(); o.put(k, v); return o; }
 
