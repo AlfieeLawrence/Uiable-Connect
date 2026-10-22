@@ -57,3 +57,16 @@ table.list td, table.list th { padding: 11px 10px; }
 
 /* toast stack is full-width on mobile: never let it swallow taps, only the toasts themselves */
 #toasts > * { pointer-events: auto; }
+
+/* ---------- modals always fit the visible viewport (safe areas + on-screen keyboard) */
+.modal-bg { height: var(--vvh, 100dvh); bottom: auto; overflow: hidden; grid-template-columns: minmax(0, 1fr); }
+.modal { min-width: 0; max-width: 100%; max-height: 100%; overflow: hidden; }
+.modal.full { height: 100%; max-height: 100%; }
+.modal header, .modal footer { flex-shrink: 0; }
+.modal header h3 { min-width: 0; overflow-wrap: anywhere; }
+.modal .body { min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overflow-wrap: anywhere; }
+.modal .body > *, .modal .row, .modal .field { min-width: 0; max-width: 100%; }
+.modal .pill { white-space: normal; overflow-wrap: anywhere; max-width: 100%; height: auto; border-radius: 12px; align-items: flex-start; }
+.modal footer { flex-wrap: wrap; }
+.modal pre { overflow-wrap: anywhere; max-width: 100%; }
+.toast { overflow-wrap: anywhere; max-width: 100%; }
