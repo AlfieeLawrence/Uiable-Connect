@@ -40,14 +40,16 @@
       "en-US"
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "target": [
         "portable",
         "zip"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -55,7 +57,8 @@
         "dmg",
         "zip"
       ],
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.icns"
     }
   },
   "allowScripts": {
