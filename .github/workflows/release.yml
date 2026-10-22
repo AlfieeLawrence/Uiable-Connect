@@ -107,6 +107,10 @@ jobs:
         run: |
           rm -rf build/Payload && mkdir -p build/Payload
           cp -R build/App.xcarchive/Products/Applications/App.app build/Payload/
+          # Ad-hoc sign every framework and the app so the .ipa has a valid signature for re-signers / LiveContainer
+          find build/Payload/App.app -name '*.framework' -o -name '*.dylib' | while read f; do codesign --force --sign - "$f"; done
+          codesign --force --sign - --timestamp=none build/Payload/App.app
+          codesign -dv build/Payload/App.app
           mkdir -p out && (cd build && zip -qry ../out/Uiable-Connect.ipa Payload)
       - uses: actions/upload-artifact@v4
         with: { name: ios, path: mobile/out/Uiable-Connect.ipa, if-no-files-found: error }
