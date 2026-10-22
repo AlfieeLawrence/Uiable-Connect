@@ -1,0 +1,64 @@
+{
+  "name": "uiable-connect",
+  "version": "1.0.0",
+  "description": "Uiable Connect - saved servers, SSH tunnels, terminal, files and stats for any Linux server",
+  "main": "main.js",
+  "author": "Alfie Lawrence",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable zip --x64",
+    "dist:win": "electron-builder --win portable zip --x64",
+    "dist:mac": "electron-builder --mac dmg zip --x64 --arm64"
+  },
+  "dependencies": {
+    "ssh2": "^1.16.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.alfie.uiableconnect",
+    "productName": "Uiable Connect",
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**",
+      "src/**",
+      "package.json",
+      "!**/*.md",
+      "!**/build/**",
+      "!**/util/**"
+    ],
+    "asar": true,
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-GB",
+      "en-US"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "portable",
+        "zip"
+      ]
+    },
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}
