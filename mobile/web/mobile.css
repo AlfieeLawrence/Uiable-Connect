@@ -19,7 +19,7 @@ table.list td, table.list th { padding: 11px 10px; }
 .kx button { flex-shrink: 0; min-width: 44px; justify-content: center; font-family: var(--mono); }
 .kx button.active { background: var(--accent); color: #fff; }
 .termhost { padding: 4px; }
-#toasts { bottom: calc(18px + var(--sab)); right: 12px; left: 12px; align-items: flex-end; }
+#toasts { pointer-events: none; top: auto; bottom: calc(18px + var(--sab)); right: 12px; left: 12px; align-items: flex-end; }
 .prog { left: 12px; bottom: calc(18px + var(--sab)); }
 .modal-bg { padding: calc(12px + var(--sat)) 12px calc(12px + var(--sab)); }
 .modal.full { height: 100%; }
@@ -54,3 +54,6 @@ table.list td, table.list th { padding: 11px 10px; }
   .empty h1 { font-size: 24px; }
 }
 @media (max-width: 380px) { .grid.cols-4 { grid-template-columns: 1fr !important; } }
+
+/* toast stack is full-width on mobile: never let it swallow taps, only the toasts themselves */
+#toasts > * { pointer-events: auto; }

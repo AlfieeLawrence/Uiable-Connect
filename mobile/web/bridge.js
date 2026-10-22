@@ -3,6 +3,11 @@
 // but SSH/SFTP/forwards go through the native UiableSsh Capacitor plugin and secrets live in the
 // iOS Keychain / Android Keystore. In a plain browser (no Capacitor) a demo mock is used so the UI can be previewed.
 (function () {
+  // Show uncaught errors on screen so problems are visible on the device (no dev console there).
+  const showErr = msg => { try { const t = document.getElementById('toasts'); if (!t) return setTimeout(() => showErr(msg), 300);
+    const d = document.createElement('div'); d.className = 'toast err'; d.textContent = '⚠ ' + msg; d.onclick = () => d.remove(); t.append(d); setTimeout(() => d.remove(), 10000); } catch {} };
+  window.addEventListener('error', e => showErr((e.message || 'Error') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '')));
+  window.addEventListener('unhandledrejection', e => showErr('Unhandled: ' + ((e.reason && e.reason.message) || e.reason)));
   const Cap = window.Capacitor;
   const native = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
   const P = native ? Cap.Plugins : {};
