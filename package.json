@@ -1,6 +1,6 @@
 {
   "name": "uiable-connect",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Uiable Connect - saved servers, SSH tunnels, terminal, files and stats for any Linux server",
   "main": "main.js",
   "author": "Alfie Lawrence",
@@ -21,6 +21,7 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
+    "npmRebuild": false,
     "appId": "com.alfie.uiableconnect",
     "productName": "Uiable Connect",
     "files": [

@@ -1,7 +1,7 @@
 name: Release
 
 # Builds every platform and attaches the files to the GitHub release for the tag.
-# Cut a release with:  git tag v1.1.0 && git push --tags
+# Cut a release with:  git tag v1.1.1 && git push --tags
 # "Run workflow" (workflow_dispatch) builds everything and keeps the files as workflow artifacts;
 # it only publishes a release if you give it a tag.
 
@@ -69,8 +69,7 @@ jobs:
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm, cache-dependency-path: mobile/package-lock.json }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17', cache: gradle }
-      - uses: android-actions/setup-android@v3
-      - run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
       - run: npm ci --ignore-scripts
       - run: npm run web
       - run: npx cap sync android
