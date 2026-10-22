@@ -71,6 +71,13 @@ h('uiable:open', async (id, mode) => {
   else { const w = new BrowserWindow({ width: 1360, height: 860, title: `Uiable · ${srv.name}`, backgroundColor: '#0b0d14', autoHideMenuBar: true }); w.loadURL(url); }
   return url;
 });
+// update check: latest GitHub release (main process, so the renderer CSP stays tight)
+h('app:update', async () => {
+  const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) return null; const j = await r.json(); return { current: app.getVersion(), latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url };
+});
+h('app:version', () => app.getVersion());
+h('app:open', url => { if (/^https:\/\/github\.com\//.test(url)) shell.openExternal(url); });
 h('shell:open', (id, sid, c, r) => S(id).openShell(sid, c, r));
 ipcMain.on('shell:write', (_e, id, sid, d) => sessions.get(id)?.shellWrite(sid, d));
 ipcMain.on('shell:resize', (_e, id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r));

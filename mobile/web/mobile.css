@@ -70,3 +70,4 @@ table.list td, table.list th { padding: 11px 10px; }
 .modal footer { flex-wrap: wrap; }
 .modal pre { overflow-wrap: anywhere; max-width: 100%; }
 .toast { overflow-wrap: anywhere; max-width: 100%; }
+#updBar { top: calc(8px + var(--sat)); border-radius: 14px; flex-wrap: wrap; justify-content: center; }

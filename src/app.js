@@ -208,3 +208,18 @@ function editServer(s = {}) {
 $('#addSrv').onclick = () => editServer();
 document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
 refresh();
+
+// ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure
+(async function checkUpdate() {
+  const K = 'uc.update', newer = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  try {
+    let c = JSON.parse(localStorage.getItem(K) || 'null');
+    if (!c || Date.now() - c.t > 6 * 3600e3) { const r = await uc.call('app:update'); if (!r || !/^\d+\.\d+\.\d+$/.test(r.latest)) return; c = { t: Date.now(), ...r }; localStorage.setItem(K, JSON.stringify(c)); }
+    const cur = (await uc.call('app:version').catch(() => null)) || c.current;
+    if (!newer(c.latest, cur) || localStorage.getItem(K + '.dismissed') === c.latest) return;
+    const b = el(`<div id="updBar"><span>Uiable Connect ${esc(c.latest)} is available</span><button class="sm primary" id="updGo">View release</button><button class="sm" id="updX" title="Dismiss">✕</button></div>`);
+    document.body.append(b);
+    b.querySelector('#updGo').onclick = () => uc.call('app:open', c.url || 'https://github.com/AlfieeLawrence/uiable-connect/releases/latest').catch(() => {});
+    b.querySelector('#updX').onclick = () => { localStorage.setItem(K + '.dismissed', c.latest); b.remove(); };
+  } catch {}
+})();

@@ -1,6 +1,6 @@
 {
   "name": "uiable-connect",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Uiable Connect - saved servers, SSH tunnels, terminal, files and stats for any Linux server",
   "main": "main.js",
   "author": "Alfie Lawrence",
@@ -58,7 +58,10 @@
         "dmg",
         "zip"
       ],
-      "identity": null,
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "notarize": false,
       "icon": "build/icon.icns"
     }
   },

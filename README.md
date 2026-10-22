@@ -27,7 +27,7 @@ an **Open Uiable dashboard** button appears and starts the tunnel to localhost:8
 
 ## Build it yourself
 - **Windows:** double-click `build-windows.bat`. The app lands in `dist\`.
-- **macOS:** on a Mac with Node.js 20+, run `bash build-mac.sh`. You get a `.dmg` and `.zip` for Intel and Apple Silicon in `dist/`. It isn't signed, so right-click the app and choose Open the first time.
+- **macOS:** on a Mac with Node.js 20+, run `bash build-mac.sh`. You get a `.dmg` and `.zip` for Intel and Apple Silicon in `dist/`. It's ad-hoc signed but not notarized, so right-click the app and choose Open the first time. If macOS still says it's damaged, run `xattr -cr "/Applications/Uiable Connect.app"`.
 
 ## Mobile: iPhone, iPad and Android
 `mobile/` is the same app for phones and tablets, built with [Capacitor](https://capacitorjs.com). It reuses `src/` with a touch layout: a server drawer, bottom tabs on phones, safe-area padding, and a terminal key row (Esc, Tab, Ctrl, arrows, ^C).

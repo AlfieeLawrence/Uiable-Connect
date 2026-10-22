@@ -11,6 +11,6 @@ let html = fs.readFileSync(path.join(src, 'index.html'), 'utf8');
 html = html.replace('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">')
   .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
   .replace('<link rel="stylesheet" href="app.css">', '<link rel="stylesheet" href="app.css"><link rel="stylesheet" href="mobile.css">')
-  .replace('<script src="app.js"></script>', '<script src="bridge.js"></script><script src="app.js"></script><script src="mobile.js"></script>');
+  .replace('<script src="app.js"></script>', '<script>window.UC_VERSION=' + JSON.stringify(require(path.join(root, 'package.json')).version) + '</script><script src="bridge.js"></script><script src="app.js"></script><script src="mobile.js"></script>');
 fs.writeFileSync(path.join(out, 'index.html'), html);
 console.log('www/ ready (' + fs.readdirSync(out).length + ' files)');

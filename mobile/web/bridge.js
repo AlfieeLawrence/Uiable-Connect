@@ -103,6 +103,10 @@
       await startForward(id, f); const url = `http://127.0.0.1:${f.localPort}/`;
       if (native && P.Browser) await P.Browser.open({ url, presentationStyle: 'fullscreen', toolbarColor: '#0b0d14' }); else window.open(url);
       return url; },
+    'app:update': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return null; const j = await r.json(); return { current: window.UC_VERSION || '0.0.0', latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url }; },
+    'app:version': async () => window.UC_VERSION || '0.0.0',
+    'app:open': async url => { if (!/^https:\/\/github\.com\//.test(url)) return; if (native && P.Browser) await P.Browser.open({ url }); else window.open(url); },
     'shell:open': async (id, sid, cols, rows) => { S(id); await Ssh.shellOpen({ id, sid, cols, rows }); return sid; },
     'fs:home': async id => (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '/' }))).path,
     'fs:list': async (id, p) => (await Ssh.sftpList({ id, path: p })).items.map(i => ({ name: i.name, size: i.size, mtime: i.mtime * 1000, mode: i.mode,
