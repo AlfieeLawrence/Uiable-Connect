@@ -52,13 +52,11 @@ jobs:
       - run: node node_modules/electron/install.js
       - run: npm run dist:mac -- --publish never
         env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }   # ad-hoc signed (identity "-" in package.json), no notarization
-      - name: Verify ad-hoc signature
+      - name: Verify ad-hoc signature (app inside every .dmg and -mac.zip, x64 + arm64)
         run: |
-          for a in dist/mac*/*.app; do
-            echo "== $a"; codesign -dv "$a" 2>&1
-            codesign --verify --deep --strict --verbose=2 "$a"
-            spctl -a -vvv -t exec "$a" 2>&1 || true   # expected "rejected" (not notarized); the point is it is not "damaged"
-          done
+          set -e; chk() { echo "== $1"; codesign -dv "$1" 2>&1 | grep -E "Signature|Identifier|flags"; codesign --verify --deep --strict "$1"; spctl -a -vvv -t exec "$1" 2>&1 || true; }
+          for z in dist/*-mac.zip; do d=$(mktemp -d); ditto -x -k "$z" "$d"; chk "$d/Uiable Connect.app"; done
+          for g in dist/*.dmg; do m=$(mktemp -d); hdiutil attach -nobrowse -readonly -mountpoint "$m" "$g" >/dev/null; chk "$m/Uiable Connect.app"; hdiutil detach "$m" >/dev/null; done
       - uses: actions/upload-artifact@v4
         with:
           name: mac
