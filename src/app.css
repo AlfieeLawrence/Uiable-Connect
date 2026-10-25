@@ -85,7 +85,7 @@ tr.hcur td { background: rgba(124,92,255,.07); }
 @media (max-width: 760px) { #panes.split { flex-direction: column; } .fcols.two { flex-direction: column; } }
 
 /* ---------- boot splash */
-#boot { position: fixed; inset: 0; z-index: 500; display: grid; place-content: center; gap: 10px; text-align: center;
+#boot { position: fixed; inset: 0; z-index: 500; display: grid; place-content: center; gap: 10px; text-align: center; pointer-events: none;
   background: #0b0d14; transition: opacity .25s; }
 #boot.gone { opacity: 0; pointer-events: none; }
 .boot-logo { font-size: 28px; font-weight: 700; } .boot-logo span { color: var(--muted); font-weight: 400; }

@@ -323,7 +323,7 @@ function editServer(s = {}) {
     <label class="field"><span>sudo password (optional)</span><input id="spw" type="password" placeholder="${s.has_sudoPassword ? '•••••• saved (leave blank to keep)' : 'Leave blank to use your login password'}"></label>
     <p class="muted small">Passwords and keys are encrypted on this device and never leave it. With "Key + password" the key is tried first and the password is the fallback.</p><div id="tr" class="small"></div>
     </div></div>
-    <footer>${s.id ? '<button class="danger" id="del">Delete</button><span class="spacer"></span>' : ''}<button id="c">Cancel</button><button id="t">Test</button><button class="primary" id="sv">Save</button></footer></div></div>`);
+    <footer>${s.id ? '<button class="danger" id="del">Delete</button><span class="spacer"></span>' : ''}<button id="c">Cancel</button><button id="t">Test</button><button id="ts">Test sudo</button><button class="primary" id="sv">Save</button></footer></div></div>`);
   document.body.append(m); let a = auth, ctype = ct, keyName = s.keyName;
   const setC = x => { ctype = x; m.querySelectorAll('[data-c]').forEach(b => b.classList.toggle('active', b.dataset.c === x));
     m.querySelector('#ctSsh').classList.toggle('hidden', x !== 'ssh'); m.querySelector('#ctSer').classList.toggle('hidden', x !== 'serial');
@@ -348,6 +348,12 @@ function editServer(s = {}) {
   m.querySelector('#t').onclick = async () => { const tr = m.querySelector('#tr'); tr.innerHTML = '<span class="pill">Testing…</span>';
     try { let r; try { r = await uc.call('servers:test', val()); } catch (e) { const k = hostKeyErr(e); if (!k) throw e;
         if (!await trustPrompt({ ...val(), hostKey: hk }, k)) throw new Error('Host key not trusted'); hk = k.fp; r = await uc.call('servers:test', val()); } tr.innerHTML = `<span class="pill ok">✓ Connected · ${esc(r.info)}</span>`; } catch (e) { tr.innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; } };
+  m.querySelector('#ts').onclick = async () => { const tr = m.querySelector('#tr'); tr.innerHTML = '<span class="pill">Testing sudo…</span>';
+    try { const r = await uc.call('sudo:test', val(), m.querySelector('#spw').value || undefined);
+      tr.innerHTML = r.ok ? `<span class="pill ok">✓ ${esc(r.info)}</span>` : `<span class="pill err">✕ ${esc(r.info)}</span>`; }
+    catch (e) { const k = hostKeyErr(e); if (k && await trustPrompt({ ...val(), hostKey: hk }, k)) { hk = k.fp; const r = await uc.call('sudo:test', val(), m.querySelector('#spw').value || undefined).catch(x => { throw x; });
+        tr.innerHTML = r.ok ? `<span class="pill ok">✓ ${esc(r.info)}</span>` : `<span class="pill err">✕ ${esc(r.info)}</span>`; }
+      else tr.innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; } };
   m.querySelector('#sv').onclick = async () => { const v = val();
     if (ctype === 'ssh' && (!v.host || !v.username)) return toast('Host and username are required', true);
     if (ctype === 'telnet' && !v.host) return toast('Host is required', true);
@@ -358,7 +364,8 @@ function editServer(s = {}) {
 $('#addSrv').onclick = () => editServer();
 $('#bakB').onclick = () => backupDialog();
 document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
-(async () => { APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); $('#boot')?.classList.add('gone'); })();
+(async () => { setTimeout(() => $('#boot')?.classList.add('gone'), 6000); // never trap the UI behind the splash
+  APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); $('#boot')?.classList.add('gone'); })();
 
 // ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure
 (async function checkUpdate() {

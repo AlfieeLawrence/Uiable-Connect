@@ -172,7 +172,7 @@ else echo "@@$EB:$EP $O"; fi`, 15000).catch(() => ({ out: '' }));
     'serial:list': async () => { throw new Error('Serial connections are not supported on phones/tablets'); },
     // sudo: the password file is opened by the shell then deleted; sudo reads it from the still-open fd.
     // With a saved password this never touches the JS side.
-    'sudo:exec': async (id, cmd, pw) => { await load(); const srv = full(id); const usePw = pw || srv.sudoPassword || srv.password;
+    'sudo:exec': async (id, cmd, pw) => { await load(); const srv = (id === '_sudot' ? null : full(id)) || {}; const usePw = pw || srv.sudoPassword || srv.password;
       if (!usePw) return exec(id, `sudo -n sh -c ${sh(cmd)}`, 180000);
       const home = (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '~' }))).path;
       const dir = home + '/.uiable-connect', pf = dir + '/.p';
@@ -201,6 +201,11 @@ else echo "@@$EB:$EP $O"; fi`, 15000).catch(() => ({ out: '' }));
     'history:get': async () => { await load(); return (data.settings || {}).history !== false; },
     'history:set': async v => { await load(); (data.settings ||= {}).history = !!v; await save(); },
     'app:open': async url => { if (!/^https:\/\/github\.com\//.test(url)) return; if (native && P.Browser) await P.Browser.open({ url }); else window.open(url); },
+    'sudo:test': async (s, pw) => { await load(); const f = { ...s }; if (s.id) { const saved = full(s.id); for (const k of SECRET) if (!f[k]) f[k] = saved[k]; }
+      const tid = '_sudot'; try { await Ssh.connect({ id: tid, ...auth(f) });
+        const r = await H['sudo:exec'](tid, 'id -u', pw || f.sudoPassword || f.password).catch(e => ({ code: 1, err: e.message }));
+        return r.out && r.out.trim() === '0' ? { ok: true, info: 'sudo works — root access confirmed' } : { ok: false, info: ((r.err || 'sudo failed').trim().split('\n').pop()) }; }
+      finally { await Ssh.disconnect({ id: tid }).catch(() => {}); sessions.delete(tid); } },
     'shell:open': async (id, sid, cols, rows) => { S(id); await Ssh.shellOpen({ id, sid, cols, rows }); return sid; },
     'fs:home': async id => (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '/' }))).path,
     'fs:list': async (id, p) => (await Ssh.sftpList({ id, path: p })).items.map(i => ({ name: i.name, size: i.size, mtime: i.mtime * 1000, mode: i.mode,

@@ -2,7 +2,7 @@
 // Uiable Connect for Docker: serves the same UI (../src) as a web app and implements the window.uc channels over
 // HTTP (POST /api/call, /api/send) + Server-Sent Events (/api/events), backed by lib/core.js (ssh2). No extra deps.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), os = require('os');
-const { makeSession, testConnection, sudoExec } = require('../lib/core');
+const { makeSession, testConnection, testSudo, sudoExec } = require('../lib/core');
 const { Store } = require('../lib/store');
 const { History } = require('../lib/history');
 const VERSION = require('../package.json').version;
@@ -51,6 +51,7 @@ const H = {
   'servers:hostkey': (id, fp) => store.setHostKey(id, fp),
   'servers:alerts': (id, r) => store.setAlerts(id, r),
   'servers:test': s => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; } return testConnection(full); },
+  'sudo:test': (s, pw) => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; } return testSudo(full, pw); },
   'snippets:list': () => store.snippets(), 'snippets:save': l => store.setSnippets(l),
   'backup:export': () => { log(null, 'backup-export'); return store.exportAll(); },
   'backup:import': (d, mode) => { if (mode === 'replace') { for (const s of sessions.values()) s.end(); sessions.clear(); } const n = store.importAll(d, mode); log(null, 'backup-import', `${n} server(s), ${mode}`); return n; },

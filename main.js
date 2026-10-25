@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu, Notificat
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { makeSession, testConnection, sudoExec, listSerial } = require('./lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, listSerial } = require('./lib/core');
 const { Store } = require('./lib/store');
 const { History } = require('./lib/history');
 
@@ -67,6 +67,10 @@ h('servers:alerts', (id, rules) => store.setAlerts(id, rules));
 h('servers:test', async (s) => { // merge saved secrets if editing and fields left blank
   let full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; }
   return testConnection(full);
+});
+h('sudo:test', async (s, pw) => { // test sudo on a throwaway connection (merges saved secrets like servers:test)
+  let full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; }
+  return testSudo(full, pw);
 });
 h('key:pick', async () => { const r = await dialog.showOpenDialog(win, { title: 'Choose private key', properties: ['openFile', 'showHiddenFiles'] });
   if (r.canceled) return null; const p = r.filePaths[0]; return { name: path.basename(p), text: fs.readFileSync(p, 'utf8') }; });
