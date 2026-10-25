@@ -122,9 +122,9 @@ async function connect(id) {
   try { try { await uc.call('conn:connect', id); }
     catch (e) { const k = hostKeyErr(e); if (!k) throw e;
       if (!await trustPrompt(s || {}, k)) { refresh(); return; } await call('servers:hostkey', id, k.fp); await uc.call('conn:connect', id); }
-    if (s && isSsh(s)) S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); }
-  catch (e) { toast('Could not connect: ' + e.message, true); }
-  refresh();
+    if (s && isSsh(s)) { refresh(); // show connected right away; Uiable detection updates the pill when it lands
+      S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); if (anyPane(id)) renderMain(); } else refresh(); }
+  catch (e) { toast('Could not connect: ' + e.message, true); refresh(); }
 }
 function uiPill(sec, s, u) {
   const p = $('#uiPill', sec); if (!p) return;

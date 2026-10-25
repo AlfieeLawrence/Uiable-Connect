@@ -109,7 +109,7 @@
       await P.Share.share({ title: 'Save backup', files: [uri] }); return name; },
     'servers:alerts': async (id, rules) => { await load(); const s = data.servers.find(x => x.id === id); if (!s) throw new Error('Server not found');
       s.alerts = rules.map(r => ({ ...r, threshold: Number(r.threshold) || 0, forSec: Number(r.forSec) || 0, cooldownMin: Number(r.cooldownMin) || 0, enabled: !!r.enabled })); await save(); },
-    'exec': (id, cmd, timeout) => { S(id); hlog(id, 'exec', cmd); return exec(id, String(cmd), Math.min(Number(timeout) || 20000, 180000)); },
+    'exec': (id, cmd, timeout) => { S(id); return exec(id, String(cmd), Math.min(Number(timeout) || 20000, 180000)); },
     // alerts -> @capacitor/local-notifications (shows while the app is open/backgrounded; the app does not poll when it's closed)
     'notify:permission': async () => { const LN = P.LocalNotifications; if (!LN) return false; const r = await LN.requestPermissions(); return r.display === 'granted'; },
     'notify': async ({ title, body }) => { const LN = P.LocalNotifications; if (!LN) return false;
@@ -139,10 +139,10 @@ EP=$(sed -n 's/^UIABLE_PORT=//p' /opt/uiable/.env 2>/dev/null | tail -1)
 PS="$EP 8080 ${extra}"
 if command -v ss >/dev/null 2>&1; then L=$(ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -un)
 elif command -v netstat >/dev/null 2>&1; then L=$(netstat -tln 2>/dev/null | awk 'NR>2{print $4}' | sed 's/.*://' | sort -un); fi
-for P in $PS $L; do echo "$P"; done | sort -un | head -20 | while read -r P; do
-  O=$( (curl -fs -m 3 "http://127.0.0.1:$P/api/state" 2>/dev/null || wget -qO- -T 3 "http://127.0.0.1:$P/api/state" 2>/dev/null) | head -c 1500 | tr '\\n' ' ')
-  [ -n "$O" ] && echo "@@$P $O"
-done`, 30000).catch(() => ({ out: '' }));
+for P in $(echo $PS $L | tr ' ' '\\n' | sort -un | head -12); do
+  ( O=$( (curl -fs -m 2 "http://127.0.0.1:$P/api/state" 2>/dev/null || wget -qO- -T 2 "http://127.0.0.1:$P/api/state" 2>/dev/null) | head -c 1500 | tr '\\n' ' ');
+    [ -n "$O" ] && echo "@@$P $O" ) &
+done; wait`, 15000).catch(() => ({ out: '' }));
       let found = null;
       for (const l of (r.out || '').split('\n')) {
         const m = l.match(/^@@(\d+)\s+(\{.*)/); if (!m || found) continue;

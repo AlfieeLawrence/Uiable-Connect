@@ -86,7 +86,7 @@ h('fwd:start', (id, f) => { const r = S(id).startForward(f); log(id, 'forward-st
 h('fwd:stop', (id, fid) => { log(id, 'forward-stop', fid); return S(id).stopForward(fid); });
 h('fwd:check', (port) => makeSession({}).checkLocalPort(Number(port)));
 h('stats', id => S(id).stats());
-h('exec', (id, cmd, timeout) => { log(id, 'exec', cmd); return S(id).exec(String(cmd), { timeout: Math.min(Number(timeout) || 20000, 180000) }); });
+h('exec', (id, cmd, timeout) => S(id).exec(String(cmd), { timeout: Math.min(Number(timeout) || 20000, 180000) }));
 // Run a command with sudo. Uses the saved sudo password when present; a transient pw may be passed for
 // one-off use (never saved). The password reaches sudo's stdin via a file descriptor — see sudoExec.
 h('sudo:exec', async (id, cmd, pw) => { log(id, 'exec-sudo', cmd); const srv = store.full(id); return sudoExec(S(id), String(cmd), pw || srv.sudoPassword || null, { timeout: 180000 }); });
