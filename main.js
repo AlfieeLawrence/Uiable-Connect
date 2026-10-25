@@ -3,7 +3,9 @@ const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu, Notificat
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { makeSession, testConnection, testSudo, sudoExec, listSerial } = require('./lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock } = require('./lib/core');
+const os = require('os');
+const net = require('net');
 const { Store } = require('./lib/store');
 const { History } = require('./lib/history');
 
@@ -50,6 +52,11 @@ app.on('window-all-closed', () => { for (const s of sessions.values()) s.end(); 
 const S = id => { const s = sessions.get(id); if (!s || s.closed) throw new Error('Not connected'); return s; };
 const h = (ch, fn) => ipcMain.handle(ch, async (_e, ...a) => { try { return { ok: true, data: await fn(...a) }; } catch (e) { return { ok: false, error: e.message || String(e) }; } });
 const fwdStatuses = (s, sess) => sess.forwardStatus ? (s.forwards || []).map(f => sess.forwardStatus(f.id)) : [];
+// Resolve a jump host into an SSH channel socket on srv._sock (one hop). unJump tears down a sock
+// that never became a session (e.g. a failed Test).
+const withJump = async srv => { if ((!srv.connType || srv.connType === 'ssh') && srv.jumpId && srv.jumpId !== srv.id) {
+  const j = store.full(srv.jumpId); if (j.jumpId === srv.id) delete j.jumpId; srv._sock = await jumpSock(j, srv.host, srv.port); } return srv; };
+const unJump = srv => { try { if (srv._sock) { srv._sock.destroy(); srv._sock._jumpClient && srv._sock._jumpClient.end(); } } catch {} };
 
 h('servers:list', () => store.list().map(s => ({ ...s, connected: sessions.has(s.id) && !sessions.get(s.id).closed,
   fwdStatus: sessions.has(s.id) ? fwdStatuses(s, sessions.get(s.id)) : [] })));
@@ -66,27 +73,50 @@ h('file:save', async (name, text) => { const r = await dialog.showSaveDialog(win
 h('servers:alerts', (id, rules) => store.setAlerts(id, rules));
 h('servers:test', async (s) => { // merge saved secrets if editing and fields left blank
   let full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; }
-  return testConnection(full);
+  try { await withJump(full); return await testConnection(full); } finally { unJump(full); }
 });
 h('sudo:test', async (s, pw) => { // test sudo on a throwaway connection (merges saved secrets like servers:test)
   let full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; }
-  return testSudo(full, pw);
+  try { await withJump(full); return await testSudo(full, pw); } finally { unJump(full); }
 });
+h('servers:dup', id => { const f = store.full(id); delete f.id; delete f.hostKey; f.name = (f.name || f.host || 'server') + ' copy'; return store.upsert(f); });
+h('servers:clearhostkey', id => { if (store.tmp && store.tmp.has(id)) { store.tmp.get(id).hostKey = null; return true; } store.clearHostKey(id); return true; });
+// parse ~/.ssh/config into saveable server entries (key contents included when readable)
+h('servers:importSsh', () => { const f = path.join(app.getPath('home'), '.ssh', 'config'); if (!fs.existsSync(f)) return [];
+  const out = []; let cur = null;
+  for (const line of fs.readFileSync(f, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*(\S+)\s+(.+?)\s*(?:#.*)?$/); if (!m) continue;
+    const k = m[1].toLowerCase(), v = m[2];
+    if (k === 'host') { if (cur) out.push(cur); cur = /[*?]/.test(v) ? null : { name: v, host: v, port: 22, username: '', privateKey: '', keyName: '' }; }
+    else if (cur) { if (k === 'hostname') cur.host = v; else if (k === 'user') cur.username = v; else if (k === 'port') cur.port = Number(v) || 22;
+      else if (k === 'identityfile' && !cur.privateKey) { const p = v.replace(/^~/, app.getPath('home')).replace(/%d/g, app.getPath('home'));
+        try { const t = fs.readFileSync(p, 'utf8'); if (/PRIVATE KEY/.test(t)) { cur.privateKey = t; cur.keyName = path.basename(p); } } catch {} } }
+  }
+  if (cur) out.push(cur); return out; });
 h('key:pick', async () => { const r = await dialog.showOpenDialog(win, { title: 'Choose private key', properties: ['openFile', 'showHiddenFiles'] });
   if (r.canceled) return null; const p = r.filePaths[0]; return { name: path.basename(p), text: fs.readFileSync(p, 'utf8') }; });
 h('serial:list', () => listSerial());
 
 h('conn:connect', async (id) => {
   if (sessions.has(id) && !sessions.get(id).closed) return true;
-  const srv = store.full(id);
+  const srv = await withJump(store.full(id));
   const s = makeSession(srv, (ev, d) => { if (ev === 'closed') log(id, 'connection-lost'); send('ev', { id, ev, ...d }); });
-  await s.connect(); sessions.set(id, s);
-  log(id, 'connected', srv.connType === 'serial' ? `${srv.serialPath} @ ${srv.baudRate || 115200}` : `${srv.username || ''}@${srv.host}:${srv.port}`);
-  if (s.startForward) for (const f of srv.forwards || []) if (f.auto) s.startForward(f).catch(e => send('ev', { id, ev: 'toast', message: e.message }));
+  try { await s.connect(); } catch (e) { unJump(srv); throw e; } sessions.set(id, s);
+  log(id, 'connected', srv.connType === 'serial' ? `${srv.serialPath} @ ${srv.baudRate || 115200}` : srv.connType === 'local' ? 'local shell' : `${srv.username || ''}@${srv.host}:${srv.port}`);
+  if (s.startForward) for (const f of srv.forwards || []) if (f.auto) (f.dir === 'remote' && s.startRemote ? s.startRemote(f) : s.startForward(f)).catch(e => send('ev', { id, ev: 'toast', message: e.message }));
   return true;
 });
+// quick connect: a temp server held in memory only — it disappears from disk-free store when removed
+h('conn:quick', async (v) => { const srv = { id: 'q' + Date.now(), name: v.host, host: String(v.host || '').trim(), port: Number(v.port) || 22, username: String(v.username || 'root').trim(), auth: 'password', connType: 'ssh', quick: true, forwards: [] };
+  if (!srv.host) throw new Error('Host is required'); if (v.password) srv.password = v.password;
+  store.putTemp(srv);
+  try { const s = makeSession(srv, (ev, d) => { if (ev === 'closed') log(srv.id, 'connection-lost'); send('ev', { id: srv.id, ev, ...d }); });
+    await s.connect(); sessions.set(srv.id, s); log(srv.id, 'connected', `${srv.username}@${srv.host}`); return srv.id; }
+  catch (e) { store.rmTemp(srv.id); throw e; } });
+h('servers:purgetemp', id => { const s = sessions.get(id); if (s) s.end(); sessions.delete(id); store.rmTemp(id); return true; });
 h('conn:disconnect', id => { const s = sessions.get(id); if (s) { s.end(); log(id, 'disconnected'); } sessions.delete(id); });
-h('fwd:start', (id, f) => { const r = S(id).startForward(f); log(id, 'forward-start', `${f.name || f.id} localhost:${f.localPort} -> ${f.remoteHost}:${f.remotePort}`); return r; });
+h('fwd:start', (id, f) => { const sess = S(id); const r = f.dir === 'remote' && sess.startRemote ? sess.startRemote(f) : sess.startForward(f);
+  log(id, 'forward-start', `${f.name || f.id} ${f.dir === 'remote' ? `${f.remoteHost || 'server'}:${f.remotePort} -> ${f.localHost || 'this PC'}:${f.localPort}` : `localhost:${f.localPort} -> ${f.remoteHost}:${f.remotePort}`}`); return r; });
 h('fwd:stop', (id, fid) => { log(id, 'forward-stop', fid); return S(id).stopForward(fid); });
 h('fwd:check', (port) => makeSession({}).checkLocalPort(Number(port)));
 h('stats', id => S(id).stats());
@@ -202,6 +232,23 @@ h('fs:downloadTo', async (id, remote, dir) => { await S(id).download(String(remo
 h('lfs:home', () => app.getPath('home'));
 h('lfs:list', async (dir) => { const es = await fs.promises.readdir(String(dir), { withFileTypes: true });
   return es.map(e => ({ name: e.name, size: 0, mtime: 0, dir: e.isDirectory(), link: e.isSymbolicLink() })).sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name)); });
+// ---- utilities: LAN scan for SSH hosts, Wake-on-LAN, TCP ping, docker container list
+h('net:scan', async () => { const bases = new Set();
+  for (const l of Object.values(os.networkInterfaces())) for (const a of l || []) if (a.family === 'IPv4' && !a.internal) bases.add(a.address.split('.').slice(0, 3).join('.'));
+  const ips = []; for (const b of [...bases].slice(0, 3)) for (let n = 1; n < 255; n++) ips.push(`${b}.${n}`);
+  const found = []; const probe = ip => new Promise(res => { const s = net.connect({ host: ip, port: 22, timeout: 600 });
+    const done = () => { s.destroy(); res(); }; s.once('connect', () => { found.push(ip); done(); }); s.once('error', done); s.once('timeout', done); });
+  for (let i = 0; i < ips.length; i += 128) await Promise.all(ips.slice(i, i + 128).map(probe));
+  return [...new Set(found)]; });
+h('net:wol', id => new Promise((res, rej) => { const s = store.full(id); const mac = String(s.mac || '').replace(/[^0-9a-f]/gi, '');
+  if (mac.length !== 12) return rej(new Error('Save a MAC address on this connection first'));
+  const buf = Buffer.alloc(102); buf.fill(0xff, 0, 6); const m = Buffer.from(mac, 'hex'); for (let i = 0; i < 16; i++) m.copy(buf, 6 + i * 6);
+  const d = require('dgram').createSocket('udp4'); d.bind(() => { d.setBroadcast(true); d.send(buf, 9, '255.255.255.255', e => { d.close(); e ? rej(e) : res(true); }); }); }));
+h('net:ping', id => new Promise(r => { const s = store.full(id); if (!s.host) return r(null); const t = Date.now();
+  const k = net.connect({ host: s.host, port: Number(s.port) || 22, timeout: 3000 });
+  k.once('connect', () => { k.destroy(); r(Date.now() - t); }); k.once('error', () => r(null)); k.once('timeout', () => { k.destroy(); r(null); }); }));
+h('docker:ps', async id => { const r = await S(id).exec("docker ps --format '{{.Names}}|{{.Image}}' 2>/dev/null");
+  return r.code ? [] : r.out.trim().split('\n').filter(Boolean).map(l => { const [name, image] = l.split('|'); return { name, image }; }); });
 h('fs:upload', async (id, locals, dir) => { for (const l of locals) await S(id).upload(l, dir, pr => send('ev', { id, ev: 'progress', ...pr })); log(id, 'upload', `${locals.length} item(s) -> ${dir}`); return true; });
 h('fs:download', async (id, remotes) => {
   const r = await dialog.showOpenDialog(win, { title: 'Download to…', properties: ['openDirectory', 'createDirectory'] });

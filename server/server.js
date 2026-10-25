@@ -2,7 +2,8 @@
 // Uiable Connect for Docker: serves the same UI (../src) as a web app and implements the window.uc channels over
 // HTTP (POST /api/call, /api/send) + Server-Sent Events (/api/events), backed by lib/core.js (ssh2). No extra deps.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), os = require('os');
-const { makeSession, testConnection, testSudo, sudoExec } = require('../lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, jumpSock } = require('../lib/core');
+const net = require('net');
 const { Store } = require('../lib/store');
 const { History } = require('../lib/history');
 const VERSION = require('../package.json').version;
@@ -43,6 +44,9 @@ const latestUiable = async () => { const r = await fetch('https://api.github.com
   if (!r.ok) return null; const j = await r.json(); const a = (j.assets || []).find(x => x.name === 'uiable.zip');
   return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; };
 const fwdStatuses = (s, sess) => sess.forwardStatus ? (s.forwards || []).map(f => sess.forwardStatus(f.id)) : [];
+const withJump = async srv => { if ((!srv.connType || srv.connType === 'ssh') && srv.jumpId && srv.jumpId !== srv.id) {
+  const j = store.full(srv.jumpId); if (j.jumpId === srv.id) delete j.jumpId; srv._sock = await jumpSock(j, srv.host, srv.port); } return srv; };
+const unJump = srv => { try { if (srv._sock) { srv._sock.destroy(); srv._sock._jumpClient && srv._sock._jumpClient.end(); } } catch {} };
 const H = {
   'servers:list': () => store.list().map(s => ({ ...s, connected: sessions.has(s.id) && !sessions.get(s.id).closed, fwdStatus: sessions.has(s.id) ? fwdStatuses(s, sessions.get(s.id)) : [] })),
   'servers:save': s => { const id = store.upsert(s); log(id, 'server-saved', `${s.username ? s.username + '@' : ''}${s.host || s.serialPath || ''}`); return id; },
@@ -50,19 +54,34 @@ const H = {
   'servers:forwards': (id, fw) => store.setForwards(id, fw),
   'servers:hostkey': (id, fp) => store.setHostKey(id, fp),
   'servers:alerts': (id, r) => store.setAlerts(id, r),
-  'servers:test': s => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; } return testConnection(full); },
-  'sudo:test': (s, pw) => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; } return testSudo(full, pw); },
+  'servers:test': async s => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; }
+    try { await withJump(full); return await testConnection(full); } finally { unJump(full); } },
+  'sudo:test': async (s, pw) => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; }
+    try { await withJump(full); return await testSudo(full, pw); } finally { unJump(full); } },
+  'servers:dup': id => { const f = store.full(id); delete f.id; delete f.hostKey; f.name = (f.name || f.host || 'server') + ' copy'; return store.upsert(f); },
+  'servers:clearhostkey': id => { if (store.tmp && store.tmp.has(id)) { store.tmp.get(id).hostKey = null; return true; } store.clearHostKey(id); return true; },
+  'servers:importSsh': () => [], // the container has no ~/.ssh/config to import
   'snippets:list': () => store.snippets(), 'snippets:save': l => store.setSnippets(l),
   'backup:export': () => { log(null, 'backup-export'); return store.exportAll(); },
   'backup:import': (d, mode) => { if (mode === 'replace') { for (const s of sessions.values()) s.end(); sessions.clear(); } const n = store.importAll(d, mode); log(null, 'backup-import', `${n} server(s), ${mode}`); return n; },
   'serial:list': () => { throw new Error('Serial ports are not reachable from inside Docker'); },
-  'conn:connect': async id => { if (sessions.has(id) && !sessions.get(id).closed) return true; const srv = store.full(id);
-    const s = makeSession(srv, (ev, d) => { if (ev === 'closed') log(id, 'connection-lost'); emit({ id, ev, ...d }); }); await s.connect(); sessions.set(id, s);
-    log(id, 'connected', srv.connType === 'serial' ? `${srv.serialPath}` : `${srv.username || ''}@${srv.host}:${srv.port}`);
-    if (s.startForward) for (const f of srv.forwards || []) if (f.auto) { try { checkFwdPort(f); s.startForward({ ...f, bind: FWD_BIND }).catch(e => emit({ id, ev: 'toast', message: e.message })); } catch (e) { emit({ id, ev: 'toast', message: e.message }); } }
+  'conn:connect': async id => { if (sessions.has(id) && !sessions.get(id).closed) return true; const srv = await withJump(store.full(id));
+    const s = makeSession(srv, (ev, d) => { if (ev === 'closed') log(id, 'connection-lost'); emit({ id, ev, ...d }); });
+    try { await s.connect(); } catch (e) { unJump(srv); throw e; } sessions.set(id, s);
+    log(id, 'connected', srv.connType === 'serial' ? `${srv.serialPath}` : srv.connType === 'local' ? 'local shell' : `${srv.username || ''}@${srv.host}:${srv.port}`);
+    if (s.startForward) for (const f of srv.forwards || []) if (f.auto) { if (f.dir === 'remote' && s.startRemote) s.startRemote(f).catch(e => emit({ id, ev: 'toast', message: e.message }));
+      else { try { checkFwdPort(f); s.startForward({ ...f, bind: FWD_BIND }).catch(e => emit({ id, ev: 'toast', message: e.message })); } catch (e) { emit({ id, ev: 'toast', message: e.message }); } } }
     return true; },
+  'conn:quick': async v => { const srv = { id: 'q' + Date.now(), name: v.host, host: String(v.host || '').trim(), port: Number(v.port) || 22, username: String(v.username || 'root').trim(), auth: 'password', connType: 'ssh', quick: true, forwards: [] };
+    if (!srv.host) throw new Error('Host is required'); if (v.password) srv.password = v.password; store.putTemp(srv);
+    try { const s = makeSession(srv, (ev, d) => { if (ev === 'closed') log(srv.id, 'connection-lost'); emit({ id: srv.id, ev, ...d }); });
+      await s.connect(); sessions.set(srv.id, s); log(srv.id, 'connected', `${srv.username}@${srv.host}`); return srv.id; }
+    catch (e) { store.rmTemp(srv.id); throw e; } },
+  'servers:purgetemp': id => { const s = sessions.get(id); if (s) s.end(); sessions.delete(id); store.rmTemp(id); return true; },
   'conn:disconnect': id => { const s = sessions.get(id); if (s) { s.end(); log(id, 'disconnected'); } sessions.delete(id); },
-  'fwd:start': (id, f) => { checkFwdPort(f); log(id, 'forward-start', `${f.name || f.id} :${f.localPort} -> ${f.remoteHost}:${f.remotePort}`); return S(id).startForward({ ...f, bind: FWD_BIND }); },
+  'fwd:start': (id, f) => { if (f.dir === 'remote') { log(id, 'forward-start', `${f.name || f.id} ${f.remoteHost}:${f.remotePort} -> ${f.localHost || 'container'}:${f.localPort}`);
+      return S(id).startRemote(f); } // remote forwards don't open a container port — no publish check
+    checkFwdPort(f); log(id, 'forward-start', `${f.name || f.id} :${f.localPort} -> ${f.remoteHost}:${f.remotePort}`); return S(id).startForward({ ...f, bind: FWD_BIND }); },
   'fwd:stop': (id, fid) => { log(id, 'forward-stop', fid); return S(id).stopForward(fid); },
   'fwd:check': port => makeSession({}).checkLocalPort(Number(port), FWD_BIND),
   'stats': id => S(id).stats(),
@@ -94,6 +113,22 @@ const H = {
   'fs:cancel': cx => { const c = copies.get(cx); if (c) c.dead = true; return true; },
   'lfs:home': () => { throw new Error('Not available in the web version'); },
   'lfs:list': () => { throw new Error('Not available in the web version'); },
+  'net:scan': async () => { const bases = new Set();
+    for (const l of Object.values(os.networkInterfaces())) for (const a of l || []) if (a.family === 'IPv4' && !a.internal) bases.add(a.address.split('.').slice(0, 3).join('.'));
+    const ips = []; for (const b of [...bases].slice(0, 3)) for (let n = 1; n < 255; n++) ips.push(`${b}.${n}`);
+    const found = []; const probe = ip => new Promise(res => { const s = net.connect({ host: ip, port: 22, timeout: 600 });
+      const done = () => { s.destroy(); res(); }; s.once('connect', () => { found.push(ip); done(); }); s.once('error', done); s.once('timeout', done); });
+    for (let i = 0; i < ips.length; i += 128) await Promise.all(ips.slice(i, i + 128).map(probe));
+    return [...new Set(found)]; },
+  'net:wol': id => new Promise((res, rej) => { const s = store.full(id); const mac = String(s.mac || '').replace(/[^0-9a-f]/gi, '');
+    if (mac.length !== 12) return rej(new Error('Save a MAC address on this connection first'));
+    const buf = Buffer.alloc(102); buf.fill(0xff, 0, 6); const m = Buffer.from(mac, 'hex'); for (let i = 0; i < 16; i++) m.copy(buf, 6 + i * 6);
+    const d = require('dgram').createSocket('udp4'); d.bind(() => { d.setBroadcast(true); d.send(buf, 9, '255.255.255.255', e => { d.close(); e ? rej(e) : res(true); }); }); }),
+  'net:ping': id => new Promise(r => { const s = store.full(id); if (!s.host) return r(null); const t = Date.now();
+    const k = net.connect({ host: s.host, port: Number(s.port) || 22, timeout: 3000 });
+    k.once('connect', () => { k.destroy(); r(Date.now() - t); }); k.once('error', () => r(null)); k.once('timeout', () => { k.destroy(); r(null); }); }),
+  'docker:ps': async id => { const r = await S(id).exec("docker ps --format '{{.Names}}|{{.Image}}' 2>/dev/null");
+    return r.code ? [] : r.out.trim().split('\n').filter(Boolean).map(l => { const [name, image] = l.split('|'); return { name, image }; }); },
 };
 const SEND = { 'shell:write': (id, sid, d) => sessions.get(id)?.shellWrite(sid, d), 'shell:resize': (id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r), 'shell:close': (id, sid) => sessions.get(id)?.shellClose(sid) };
 

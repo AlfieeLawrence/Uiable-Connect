@@ -31,11 +31,34 @@ async function refresh() { servers = await uc.call('servers:list');
   if (!panes.some(p => p.srv) && servers[0]) panes[0].srv = servers[0].id;
   renderSide(); renderMain(); }
 function renderSide() {
-  $('#srvlist').innerHTML = servers.length ? '' : '<p class="muted small" style="padding:8px">No servers yet.</p>';
-  for (const s of servers) {
-    const n = el(`<div class="srv ${panes.some(p => p.srv === s.id) ? 'active' : ''}"><span class="dot ${s.connected ? 'on' : ''}"></span><div class="t"><b>${esc(s.name || s.host || s.serialPath)}</b><span class="muted small">${connLabel(s)}</span></div></div>`);
-    n.onclick = () => { panes[focusPane].srv = s.id; const t = TABS(s); if (!t.includes(panes[focusPane].tab)) panes[focusPane].tab = t[0]; renderSide(); renderMain(); }; $('#srvlist').append(n);
+  const host = $('#srvlist');
+  host.innerHTML = servers.length ? '' : '<p class="muted small" style="padding:8px">No connections yet.</p>';
+  // group headers (collapsible); ungrouped connections sit at the top
+  const groups = new Map(); for (const s of servers) { const g = s.group || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(s); }
+  const names = [...groups.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+  const col = JSON.parse(localStorage.getItem('uc.gcol') || '{}');
+  for (const g of names) {
+    if (g) { const h = el(`<div class="ghead">${col[g] ? '▸' : '▾'} ${esc(g)} <span class="muted">${groups.get(g).length}</span></div>`);
+      h.onclick = () => { col[g] = !col[g]; localStorage.setItem('uc.gcol', JSON.stringify(col)); renderSide(); }; host.append(h);
+      if (col[g]) continue; }
+    for (const s of groups.get(g)) {
+      const n = el(`<div class="srv ${panes.some(p => p.srv === s.id) ? 'active' : ''} ${s.quick ? 'quick' : ''}"><span class="dot ${s.connected ? 'on' : ''}"></span><div class="t"><b>${esc(s.name || s.host || s.serialPath)}</b><span class="muted small">${connLabel(s)}</span></div></div>`);
+      n.onclick = () => { panes[focusPane].srv = s.id; const t = TABS(s); if (!t.includes(panes[focusPane].tab)) panes[focusPane].tab = t[0]; renderSide(); renderMain(); };
+      n.oncontextmenu = e => { e.preventDefault(); srvMenu(e.clientX, e.clientY, s); };
+      host.append(n);
+    }
   }
+}
+function srvMenu(x, y, s) {
+  ctxMenu(x, y, [
+    s.connected ? ['Disconnect', async () => { S(s.id).userClosed = true; await call(s.quick ? 'servers:purgetemp' : 'conn:disconnect', s.id); refresh(); }]
+      : ['Connect', () => connect(s.id)],
+    s.mac && !s.connected ? ['⚡ Wake on LAN', () => call('net:wol', s.id).then(() => toast('Wake packet sent'))] : null,
+    ['Edit', () => editServer(s)],
+    ['Duplicate', async () => { await call('servers:dup', s.id); refresh(); }],
+    s.hostKey ? ['Forget host key', async () => { await call('servers:clearhostkey', s.id); toast('Host key forgotten — it will be asked again on next connect'); refresh(); }] : null,
+    ['Delete', async () => { if (!confirm(`Delete ${s.name || s.host}?`)) return; await call(s.quick ? 'servers:purgetemp' : 'servers:delete', s.id); delete st[s.id]; panes.forEach(p => { if (p.srv === s.id) p.srv = null; }); refresh(); }],
+  ].filter(Boolean));
 }
 // ---------- clipboard (Electron: native clipboard via preload; browser/mobile: navigator.clipboard)
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -86,19 +109,20 @@ function renderMain() {
 function renderPane(sec, p, i) {
   const s = servers.find(x => x.id === p.srv);
   if (!s) {
-    sec.innerHTML = `<div class="empty"><div><h1>Uiable Connect</h1><p class="muted">Pick a server on the left for a terminal, files, stats and tunnels.<br>Works with or without Uiable installed on it.</p><button class="primary" data-act="add">+ Add server</button></div></div>`;
+    sec.innerHTML = `<div class="empty"><div><h1>Uiable Connect</h1><p class="muted">Pick a connection on the left for a terminal, files, stats and tunnels.<br>Works with or without Uiable installed on it.</p><button class="primary" data-act="add">+ Add connection</button></div></div>`;
     return;
   }
   const u = S(s.id), tabs = TABS(s);
-  sec.innerHTML = `<div class="pane-head"><span class="pdot ${s.connected ? 'on' : ''}"></span><div class="grow" style="min-width:0"><div class="ph-name ellipsis">${esc(s.name || s.host || s.serialPath)}</div><div class="ph-sub ellipsis">${connLabel(s)}${isSsh(s) ? ' · ' + ({ password: 'password', key: 'SSH key', keypass: 'key + password' }[s.auth] || s.auth) : ''}</div></div>
+  sec.innerHTML = `<div class="pane-head"><span class="pdot ${s.connected ? 'on' : ''}"></span><div class="grow" style="min-width:0"><div class="ph-name ellipsis">${esc(s.name || s.host || s.serialPath)}${s.group ? ` <span class="gtag">${esc(s.group)}</span>` : ''}</div><div class="ph-sub ellipsis">${u.lat ? u.lat + ' ms · ' : ''}${connLabel(s)}${s.jumpId ? ' ⇢ via ' + esc(servers.find(j => j.id === s.jumpId)?.name || 'jump host') + ' · ' : ''}${isSsh(s) ? ({ password: 'password', key: 'SSH key', keypass: 'key + password' }[s.auth] || s.auth) : ''}</div></div>
     ${panes.length > 1 ? '<button class="sm" id="pclose" title="Close this pane">✕</button>' : ''}
     ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side">⿻</button>' : ''}
-    <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : '<button class="primary sm" id="conn">Connect</button>'}</div>
+    <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : `${s.mac ? '<button class="sm" id="wake" title="Send a Wake-on-LAN packet">⚡ Wake</button>' : ''}<button class="primary sm" id="conn">Connect</button>`}</div>
     <div class="tabs"><div class="seg">${tabs.map(t => `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
     <div class="view" id="view"></div>`;
   $('#edit', sec).onclick = () => editServer(s);
   if ($('#conn', sec)) $('#conn', sec).onclick = () => connect(s.id);
-  if ($('#disc', sec)) $('#disc', sec).onclick = async () => { u.userClosed = true; await call('conn:disconnect', s.id); u.terms.forEach(t => t.term.dispose()); u.terms = []; u.uiable = null; refresh(); };
+  const wk = $('#wake', sec); if (wk) wk.onclick = () => call('net:wol', s.id).then(() => toast('Wake packet sent — give it a moment, then connect'));
+  if ($('#disc', sec)) $('#disc', sec).onclick = async () => { u.userClosed = true; await call(s.quick ? 'servers:purgetemp' : 'conn:disconnect', s.id); u.terms.forEach(t => t.term.dispose()); u.terms = []; u.uiable = null; refresh(); };
   const ps = $('#psplit', sec); if (ps) ps.onclick = () => { panes.push({ srv: s.id, tab: 'terminal' }); focusPane = panes.length - 1; renderSide(); renderMain(); };
   const pc = $('#pclose', sec); if (pc) pc.onclick = () => { panes.splice(i, 1); if (!panes.length) panes = [{ srv: null, tab: 'overview' }]; focusPane = Math.max(0, i - 1); renderSide(); renderMain(); };
   sec.querySelectorAll('.tabs button[data-t]').forEach(b => b.onclick = () => { p.tab = b.dataset.t; renderMain(); });
@@ -122,8 +146,9 @@ async function connect(id) {
   try { try { await uc.call('conn:connect', id); }
     catch (e) { const k = hostKeyErr(e); if (!k) throw e;
       if (!await trustPrompt(s || {}, k)) { refresh(); return; } await call('servers:hostkey', id, k.fp); await uc.call('conn:connect', id); }
-    if (s && isSsh(s)) { refresh(); // show connected right away; Uiable detection updates the pill when it lands
-      S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); if (anyPane(id)) renderMain(); } else refresh(); }
+    refresh(); // show connected right away; detection + latency fill in async
+    uc.call('net:ping', id).then(ms => { S(id).lat = ms; if (anyPane(id)) renderMain(); }).catch(() => {});
+    if (s && isSsh(s)) { S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); if (anyPane(id)) renderMain(); } }
   catch (e) { toast('Could not connect: ' + e.message, true); refresh(); }
 }
 function uiPill(sec, s, u) {
@@ -159,9 +184,19 @@ function vOverview(s, u, v) {
 }
 
 // ---------- Terminal (tabs persist while connected; tmux keeps sessions alive on the server)
+const TERM_THEMES = {
+  dark: { background: '#0b0d14', foreground: '#e8eaf2', cursor: '#7c5cff' },
+  light: { background: '#fafbfe', foreground: '#1a1c26', cursor: '#5b3df5' },
+  solarized: { background: '#002b36', foreground: '#839496', cursor: '#93a1a1' },
+  dracula: { background: '#282a36', foreground: '#f8f8f2', cursor: '#bd93f9' },
+  monokai: { background: '#272822', foreground: '#f8f8f2', cursor: '#f92672' },
+};
+const termTheme = () => TERM_THEMES[localStorage.getItem('uc.ttheme') || 'dark'] || TERM_THEMES.dark;
 function vTerminal(s, u, v) {
   if (!s.connected) { v.innerHTML = notConn(s); return; }
-  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT">+ New tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button></div><div class="termhost" id="th"></div></div>`;
+  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT" title="New tab (Ctrl+T)">+ Tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button><button class="sm" id="dockT" title="Open a shell inside a running Docker container on the server">◫ Docker</button>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button><span class="spacer"></span><button class="sm" id="findB" title="Search in the terminal (Ctrl+F)">🔍</button></div>
+    <div class="termhost" id="th"></div>
+    <div class="findbar hidden" id="fb"><input id="fbi" placeholder="Find in terminal…"><button class="sm" id="fbp" title="Previous">↑</button><button class="sm" id="fbn" title="Next">↓</button><button class="sm" id="fbx">✕</button></div></div>`;
   const draw = () => {
     $('#ttabs').innerHTML = u.terms.map((t, i) => `<button class="${t.sid === u.activeTerm ? 'active' : ''}" data-s="${t.sid}">${t.label || 'Tab ' + (i + 1)} <span data-x="${t.sid}" style="opacity:.6">✕</span></button>`).join('');
     $('#ttabs').querySelectorAll('button').forEach(b => b.onclick = (e) => { if (e.target.dataset.x) { uc.send('shell:close', s.id, e.target.dataset.x); return; } u.activeTerm = b.dataset.s; show(); });
@@ -170,19 +205,33 @@ function vTerminal(s, u, v) {
     if (t.node.parentNode !== h) h.append(t.node); t.node.style.display = ''; requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); }); };
   const newT = async (runCmd, label) => {
     const sid = 't' + Date.now() + Math.floor(Math.random() * 999); const node = document.createElement('div');
-    const term = new Terminal({ fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: 14, cursorBlink: true, scrollback: 3000, theme: { background: '#0b0d14' } });
+    const term = new Terminal({ fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: 14, cursorBlink: true, scrollback: 3000, theme: termTheme() });
     const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
+    const search = window.SearchAddon ? new SearchAddon.SearchAddon() : null; if (search) term.loadAddon(search);
     $('#th').append(node); term.open(node); fit.fit();
     term.onData(d => uc.send('shell:write', s.id, sid, d));
     termClipboard(term, node);
     term.onResize(({ cols, rows }) => uc.send('shell:resize', s.id, sid, cols, rows));
-    u.terms.push({ sid, term, fit, node, label }); u.activeTerm = sid;
+    u.terms.push({ sid, term, fit, search, node, label }); u.activeTerm = sid;
     await call('shell:open', s.id, sid, term.cols, term.rows);
     if (runCmd) uc.send('shell:write', s.id, sid, runCmd.replace(/\r?\n/g, '\r') + '\r');
     show();
   };
-  $('#newT').onclick = () => newT(); u.redrawTerms = show;
+  // find bar: searches the active terminal via the search addon
+  const fb = $('#fb', v), fbi = $('#fbi', v);
+  const curSearch = () => u.terms.find(t => t.sid === u.activeTerm)?.search;
+  const find = dir => { const sa = curSearch(); if (sa && fbi.value) dir < 0 ? sa.findPrevious(fbi.value) : sa.findNext(fbi.value); };
+  u.search = { open() { fb.classList.remove('hidden'); fbi.focus(); fbi.select(); }, close() { fb.classList.add('hidden'); curSearch()?.clearSelection(); } };
+  $('#findB', v).onclick = () => fb.classList.contains('hidden') ? u.search.open() : u.search.close();
+  $('#fbx', v).onclick = () => u.search.close();
+  $('#fbn', v).onclick = () => find(1); $('#fbp', v).onclick = () => find(-1);
+  fbi.oninput = () => find(1); fbi.onkeydown = e => { if (e.key === 'Enter') find(e.shiftKey ? -1 : 1); if (e.key === 'Escape') u.search.close(); };
+  $('#newT').onclick = () => newT(); u.newT = newT; u.redrawTerms = show;
   const tm = $('#tmuxT'); if (tm) tm.onclick = () => newT('tmux new-session -A -s uiable || tmux new-session -s uiable', 'tmux');
+  const dk = $('#dockT', v); if (dk) dk.onclick = async () => { const cs = await call('docker:ps', s.id);
+    if (!cs.length) return toast('No running containers on this server', true);
+    const c = cs.length === 1 ? cs[0].name : await pickList('Shell into container', cs.map(x => x.name + '  ·  ' + x.image), cs.map(x => x.name));
+    if (c) newT(`docker exec -it ${c} bash 2>/dev/null || docker exec -it ${c} sh`, '◫ ' + c); };
   $('#snipB').onclick = () => snippetsDialog(s, u);
   if (!u.terms.length) newT(); else show();
 }
@@ -192,7 +241,9 @@ uc.on(d => {
   else if (d.ev === 'shell-exit') { const i = u.terms.findIndex(t => t.sid === d.sid); if (i >= 0) { u.terms[i].term.dispose(); u.terms[i].node.remove(); u.terms.splice(i, 1); }
     if (u.activeTerm === d.sid) u.activeTerm = u.terms[0]?.sid; if (anyPane(d.id, 'terminal')) u.redrawTerms?.(); }
   else if (d.ev === 'closed') { const s = servers.find(x => x.id === d.id); const r = s && rulesFor(s).find(x => x.metric === 'disconnect');
-    if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = []; refresh(); }
+    if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = [];
+    if (s && s.quick) uc.call('servers:purgetemp', d.id).catch(() => {});
+    refresh(); }
   else if (d.ev === 'progress') { let p = $('#prog'); if (!p) { p = el('<div id="prog" class="pill prog"></div>'); document.body.append(p); }
     p.innerHTML = `<span>${esc(d.name)} ${d.tot ? Math.round(100 * d.t / d.tot) + '%' : fmtB(d.t)}</span><i class="pbar"><b style="width:${d.tot ? Math.round(100 * d.t / d.tot) : 0}%"></b></i>${d.cx ? '<b class="pcx" title="Cancel">✕</b>' : ''}`;
     const x = p.querySelector('.pcx'); if (x) x.onclick = () => { uc.call('fs:cancel', d.cx).catch(() => {}); p.remove(); };
@@ -267,6 +318,27 @@ async function vFiles(s, u, v) {
   $('#twoP', v).onclick = () => { if (u.peer) { u.peer = null; } else { u.peer = peers.find(x => x.id !== s.id)?.id || s.id; } vFiles(s, u, v); };
   const ps = $('#peerSel', v); if (ps) ps.onchange = () => { u.peer = ps.value; u.f2 = {}; vFiles(s, u, v); };
 }
+// ---------- global shortcuts: Ctrl+T/W/1-9/F for terminals in the focused pane
+document.addEventListener('keydown', e => {
+  if (!e.ctrlKey || e.target.closest('input,textarea,select')) return;
+  const p = panes[focusPane]; if (!p || p.tab !== 'terminal') { if (e.key === 'f' || e.key === 'F') { if (p && p.tab === 'terminal') { e.preventDefault(); } } return; }
+  const u = S(p.srv); const k = e.key.toLowerCase();
+  if (k === 't') { e.preventDefault(); u.newT && u.newT(); }
+  else if (k === 'w') { e.preventDefault(); if (u.activeTerm) uc.send('shell:close', p.srv, u.activeTerm); }
+  else if (k === 'f') { e.preventDefault(); u.search && u.search.open(); }
+  else if (/^[1-9]$/.test(e.key)) { const i = +e.key - 1; if (u.terms[i]) { e.preventDefault(); u.activeTerm = u.terms[i].sid; u.redrawTerms && u.redrawTerms(); } }
+});
+function pickList(title, labels, vals) { return new Promise(res => { // tiny chooser: click a row -> returns vals[i]
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:420px"><header><h3>${esc(title)}</h3></header><div class="body" style="padding:8px 0">
+    ${labels.map((l, i) => `<div class="pickrow" data-i="${i}">${esc(l)}</div>`).join('')}</div><footer><span class="spacer"></span><button id="c">Cancel</button></footer></div></div>`);
+  document.body.append(m); m.querySelector('#c').onclick = () => { m.remove(); res(null); };
+  m.querySelectorAll('.pickrow').forEach(r => r.onclick = () => { const v = vals[r.dataset.i]; m.remove(); res(v); }); }); }
+function pickChecks(labels, vals) { return new Promise(res => { // checkbox chooser -> returns vals[]
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:460px"><header><h3>Import from ~/.ssh/config</h3></header><div class="body" style="padding:8px 0">
+    ${labels.map((l, i) => `<label class="pickrow"><input type="checkbox" data-i="${i}" checked> ${esc(l)}</label>`).join('')}</div>
+    <footer><span class="spacer"></span><button id="c">Cancel</button><button class="primary" id="o">Import selected</button></footer></div></div>`);
+  document.body.append(m); m.querySelector('#c').onclick = () => { m.remove(); res(null); };
+  m.querySelector('#o').onclick = () => { const out = [...m.querySelectorAll('input:checked')].map(x => vals[x.dataset.i]); m.remove(); res(out); }; }); }
 function prompt2(title, val = '', pw = false) { return new Promise(res => {
   const m = el(`<div class="modal-bg"><div class="modal"><header><h3>${esc(title)}</h3></header><div class="body"><input ${pw ? 'type="password"' : ''}></div><footer><button id="c">Cancel</button><button class="primary" id="o">OK</button></footer></div></div>`);
   document.body.append(m); const i = m.querySelector('input'); i.value = val; if (!pw) i.select(); i.focus();
@@ -278,17 +350,22 @@ function vForwards(s, u, v) {
   const fw = s.forwards || [];
   const stat = id => s.fwdStatus?.find(x => x.id === id) || { active: false };
   const pubNote = APP.fwdPorts ? ` · PC port must be published by the container (${fmtPorts(APP.fwdPorts)}); add -p mappings and set UC_FWD_PORTS for others` : '';
-  v.innerHTML = `<div class="card"><div class="card-title grow">Port forwards <span class="muted">· a port on the server shows up on this PC at localhost:&lt;PC port&gt;${esc(pubNote)}</span></div>
-    <table class="list"><thead><tr><th>Name</th><th>Server host</th><th>Server port</th><th>PC port</th><th>Auto</th><th>Status</th><th></th></tr></thead><tbody>
-    ${fw.map((f, i) => { const a = stat(f.id); return `<tr data-i="${i}"><td><input data-k="name" value="${esc(f.name)}"></td><td><input data-k="remoteHost" value="${esc(f.remoteHost)}"></td><td style="width:110px"><input data-k="remotePort" type="number" value="${f.remotePort}"></td><td style="width:110px"><input data-k="localPort" type="number" value="${f.localPort}"></td>
+  v.innerHTML = `<div class="card"><div class="card-title grow">Port forwards <span class="muted">· "PC listens" puts a server port at localhost:port on this PC · "Server listens" puts a PC port on the server${esc(pubNote)}</span></div>
+    <table class="list"><thead><tr><th>Name</th><th>Direction</th><th>Server host</th><th>Server port</th><th>PC host</th><th>PC port</th><th>Auto</th><th>Status</th><th></th></tr></thead><tbody>
+    ${fw.map((f, i) => { const a = stat(f.id); const remote = f.dir === 'remote'; return `<tr data-i="${i}"><td><input data-k="name" value="${esc(f.name)}"></td>
+      <td><select data-k="dir" ${f.builtin ? 'disabled' : ''}><option value="local" ${!remote ? 'selected' : ''}>PC listens</option><option value="remote" ${remote ? 'selected' : ''}>Server listens</option></select></td>
+      <td><input data-k="remoteHost" value="${esc(f.remoteHost)}" title="${remote ? 'Where the server listens' : 'Server-side target'}"></td><td style="width:100px"><input data-k="remotePort" type="number" value="${f.remotePort}"></td>
+      <td style="width:130px"><input data-k="localHost" value="${esc(f.localHost || '127.0.0.1')}" ${remote ? '' : 'disabled'} title="PC-side target (Server listens only)"></td><td style="width:100px"><input data-k="localPort" type="number" value="${f.localPort}"></td>
       <td><input type="checkbox" data-k="auto" ${f.auto ? 'checked' : ''} title="Start when connecting"></td>
       <td>${a.active ? `<span class="pill ok">● On${a.conns ? ' · ' + a.conns : ''}</span>` : '<span class="pill">Off</span>'}</td>
-      <td class="nowrap right">${a.active ? `<a href="#" data-open="${f.localPort}">open</a> <button class="sm" data-stop="${f.id}">Stop</button>` : `<button class="sm primary" data-start="${i}" ${s.connected ? '' : 'disabled'}>Start</button>`} ${f.builtin ? '' : `<button class="sm danger" data-del="${i}">✕</button>`}</td></tr>`; }).join('')}
-    </tbody></table><div class="row" style="margin-top:12px"><button class="sm" id="addF">+ Add forward</button><span class="spacer"></span><span class="muted small">Edits save automatically</span></div></div>`;
+      <td class="nowrap right">${a.active ? `${!remote ? `<a href="#" data-open="${f.localPort}">open</a>` : ''} <button class="sm" data-stop="${f.id}">Stop</button>` : `<button class="sm primary" data-start="${i}" ${s.connected ? '' : 'disabled'}>Start</button>`} ${f.builtin ? '' : `<button class="sm danger" data-del="${i}">✕</button>`}</td></tr>`; }).join('')}
+    </tbody></table><div class="row" style="margin-top:12px"><button class="sm" id="addF">+ Add forward</button><span class="spacer"></span><span class="muted small">Edits save automatically · remote listens need AllowTcpForwarding in sshd_config</span></div></div>`;
   const persist = async () => { await call('servers:forwards', s.id, fw); };
-  v.querySelectorAll('input[data-k]').forEach(inp => inp.onchange = () => { const f = fw[inp.closest('tr').dataset.i]; f[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value; persist(); });
+  v.querySelectorAll('[data-k]').forEach(inp => inp.onchange = () => { const f = fw[inp.closest('tr').dataset.i]; f[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value;
+    if (inp.dataset.k === 'dir') { inp.closest('tr').querySelector('[data-k="localHost"]').disabled = f.dir !== 'remote'; }
+    persist(); });
   v.querySelectorAll('[data-start]').forEach(b => b.onclick = async () => { const f = fw[b.dataset.start];
-    const c = await uc.call('fwd:check', f.localPort); if (!c.free) return toast(`Port ${f.localPort} is already in use on this PC, pick another PC port`, true);
+    if (f.dir !== 'remote') { const c = await uc.call('fwd:check', f.localPort); if (!c.free) return toast(`Port ${f.localPort} is already in use on this PC, pick another PC port`, true); }
     await call('fwd:start', s.id, f); refresh(); });
   v.querySelectorAll('[data-stop]').forEach(b => b.onclick = async () => { await call('fwd:stop', s.id, b.dataset.stop); refresh(); });
   v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { const f = fw[b.dataset.del]; if (s.connected) await uc.call('fwd:stop', s.id, f.id).catch(() => {}); fw.splice(b.dataset.del, 1); await persist(); refresh(); });
@@ -313,11 +390,15 @@ async function vHistory(s, u, v) {
 // ---------- Add / edit server
 function editServer(s = {}) {
   const auth = s.auth || 'password', ct = s.connType || 'ssh';
-  const canTelnet = !ON_MOBILE, canSerial = !ON_MOBILE && APP.platform !== 'web';
-  const m = el(`<div class="modal-bg"><div class="modal"><header><h3>${s.id ? 'Edit server' : 'Add server'}</h3></header><div class="body">
+  const canTelnet = !ON_MOBILE, canSerial = !ON_MOBILE && APP.platform !== 'web', canLocal = !ON_MOBILE, canScan = !ON_MOBILE;
+  const jumps = servers.filter(x => x.id !== s.id && isSsh(x) && !x.quick);
+  const groupList = [...new Set(servers.map(x => x.group).filter(Boolean))];
+  const m = el(`<div class="modal-bg"><div class="modal"><header><h3>${s.id ? `Edit connection` : `Add connection`}</h3></header><div class="body">
     <label class="field"><span>Name</span><input id="n" placeholder="Home server" value="${esc(s.name)}"></label>
-    ${canTelnet || canSerial ? `<div class="seg" style="margin-bottom:12px"><button data-c="ssh">SSH</button>${canTelnet ? '<button data-c="telnet">Telnet</button>' : ''}${canSerial ? '<button data-c="serial">Serial</button>' : ''}</div>` : ''}
-    <div id="ctNet"><div class="row"><label class="field grow"><span>Host / IP</span><input id="h" placeholder="192.168.1.20" value="${esc(s.host)}"></label><label class="field" style="width:90px"><span>Port</span><input id="p" type="number" value="${s.port || 22}"></label></div></div>
+    ${canTelnet || canSerial || canLocal ? `<div class="seg" style="margin-bottom:12px;flex-wrap:wrap"><button data-c="ssh">SSH</button>${canTelnet ? '<button data-c="telnet">Telnet</button><button data-c="raw">Raw TCP</button>' : ''}${canSerial ? '<button data-c="serial">Serial</button>' : ''}${canLocal ? '<button data-c="local">Local shell</button>' : ''}</div>` : ''}
+    <div id="ctLoc" class="hidden"><p class="muted small" style="margin-bottom:12px">A terminal on ${APP.platform === 'web' ? 'the machine running this Docker app' : 'this device'} — no server needed. Commands only (no full-screen apps like vim).</p></div>
+    <div id="ctNet"><div class="row"><label class="field grow"><span>Host / IP</span><input id="h" placeholder="192.168.1.20" value="${esc(s.host)}"></label><label class="field" style="width:90px"><span>Port</span><input id="p" type="number" value="${s.port || 22}"></label></div>
+    <div class="row" style="margin:-4px 0 12px">${canScan ? '<button class="sm" id="scan">Find on my network</button>' : ''}${APP.platform === 'desktop' && !s.id ? '<button class="sm" id="impSsh">Import ~/.ssh/config</button>' : ''}</div></div>
     <div id="ctSer" class="hidden"><div class="row"><label class="field grow"><span>Serial port</span><select id="sp"><option value="">loading…</option></select></label>
       <label class="field" style="width:130px"><span>Baud</span><select id="bd">${[300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map(b => `<option ${b === (s.baudRate || 115200) ? 'selected' : ''}>${b}</option>`).join('')}</select></label></div>
       <div class="row" style="margin:-4px 0 12px"><button class="sm" id="spr">⟳ Refresh ports</button><span class="muted small">USB and paired Bluetooth devices appear as COM/serial ports</span></div></div>
@@ -329,6 +410,10 @@ function editServer(s = {}) {
     <div id="ky"><label class="field"><span>Private key ${s.keyName ? '· ' + esc(s.keyName) : ''}</span><textarea id="key" rows="4" class="mono" placeholder="${s.has_privateKey ? 'Key saved (leave blank to keep). ' : ''}Paste -----BEGIN OPENSSH PRIVATE KEY----- …"></textarea></label>
       <div class="row" style="margin:-4px 0 12px"><button class="sm" id="pick">Choose key file…</button><span class="muted small" id="kn"></span></div>
       <label class="field"><span>Key passphrase (optional)</span><input id="pp" type="password" placeholder="${s.has_passphrase ? '•••••• saved' : ''}"></label></div>
+    <div id="ctAdv"><div class="msec">Advanced</div>
+    <div class="row"><label class="field grow"><span>Group</span><input id="grp" list="grps" placeholder="e.g. home" value="${esc(s.group || '')}"><datalist id="grps">${groupList.map(g => `<option value="${esc(g)}">`).join('')}</datalist></label>
+    <label class="field grow"><span>MAC address (Wake-on-LAN)</span><input id="mac" placeholder="AA:BB:CC:DD:EE:FF" value="${esc(s.mac || '')}"></label></div>
+    <label class="field"><span>Jump host (reach this server through another connection)</span><select id="jh"><option value="">None</option>${jumps.map(j => `<option value="${j.id}" ${s.jumpId === j.id ? 'selected' : ''}>${esc(j.name || j.host)}</option>`).join('')}</select></label></div>
     <div class="msec">Admin</div>
     <label class="field"><span>sudo password (optional)</span><input id="spw" type="password" placeholder="${s.has_sudoPassword ? '•••••• saved (leave blank to keep)' : 'Leave blank to use your login password'}"></label>
     <p class="muted small">Passwords and keys are encrypted on this device and never leave it. With "Key + password" the key is tried first and the password is the fallback.</p><div id="tr" class="small"></div>
@@ -337,9 +422,24 @@ function editServer(s = {}) {
   document.body.append(m); let a = auth, ctype = ct, keyName = s.keyName;
   const setC = x => { ctype = x; m.querySelectorAll('[data-c]').forEach(b => b.classList.toggle('active', b.dataset.c === x));
     m.querySelector('#ctSsh').classList.toggle('hidden', x !== 'ssh'); m.querySelector('#ctSer').classList.toggle('hidden', x !== 'serial');
-    m.querySelector('#ctNet').classList.toggle('hidden', x === 'serial'); m.querySelector('#p').value = x === 'telnet' ? (s.port || 23) : (s.port || 22);
+    m.querySelector('#ctNet').classList.toggle('hidden', x === 'serial' || x === 'local'); m.querySelector('#ctLoc').classList.toggle('hidden', x !== 'local');
+    m.querySelector('#ctAdv').classList.toggle('hidden', x !== 'ssh');
+    m.querySelector('#p').value = x === 'telnet' ? (s.port || 23) : (s.port || 22);
     if (x === 'serial') ports(); };
-  m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => setC(b.dataset.c)); setC(canTelnet || canSerial ? ct : 'ssh');
+  m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => setC(b.dataset.c)); setC(canTelnet || canSerial || canLocal ? ct : 'ssh');
+  const sc = m.querySelector('#scan'); if (sc) sc.onclick = async () => { sc.disabled = true; sc.textContent = 'Scanning…';
+    try { const ips = await uc.call('net:scan');
+      if (!ips.length) return toast('Nothing with SSH open found on this network', true);
+      const ip = ips.length === 1 ? ips[0] : await pickList('SSH hosts on your network', ips, ips);
+      if (ip) m.querySelector('#h').value = ip;
+    } catch (e) { toast(e.message, true); } finally { sc.disabled = false; sc.textContent = 'Find on my network'; } };
+  const imp = m.querySelector('#impSsh'); if (imp) imp.onclick = async () => {
+    try { const list = await uc.call('servers:importSsh');
+      if (!list.length) return toast('No usable hosts found in ~/.ssh/config', true);
+      const picks = await pickChecks(list.map(x => `${x.name}  ·  ${x.username ? x.username + '@' : ''}${x.host}:${x.port}${x.keyName ? '  ·  ' + x.keyName : ''}`), list.map((_, i) => i));
+      for (const i of picks || []) { const x = list[i]; await uc.call('servers:save', { name: x.name, host: x.host, port: x.port, username: x.username, auth: x.privateKey ? 'key' : 'password', privateKey: x.privateKey || '', keyName: x.keyName, connType: 'ssh' }); }
+      if (picks && picks.length) { toast(`Imported ${picks.length} connection(s)`); m.remove(); refresh(); }
+    } catch (e) { toast(e.message, true); } };
   const setA = x => { a = x; m.querySelectorAll('[data-a]').forEach(b => b.classList.toggle('active', b.dataset.a === x));
     m.querySelector('#pw').classList.toggle('hidden', x === 'key'); m.querySelector('#ky').classList.toggle('hidden', x === 'password'); };
   m.querySelectorAll('[data-a]').forEach(b => b.onclick = () => setA(b.dataset.a)); setA(auth);
@@ -352,6 +452,7 @@ function editServer(s = {}) {
   const val = () => ({ id: s.id, hostKey: hk, connType: ctype, name: m.querySelector('#n').value.trim(), host: m.querySelector('#h').value.trim(), port: m.querySelector('#p').value,
     serialPath: m.querySelector('#sp')?.value, baudRate: +m.querySelector('#bd')?.value || 115200,
     username: m.querySelector('#u').value.trim(), auth: a, keyName,
+    group: m.querySelector('#grp')?.value.trim() || '', mac: m.querySelector('#mac')?.value.trim() || '', jumpId: m.querySelector('#jh')?.value || '',
     password: m.querySelector('#pass').value, privateKey: m.querySelector('#key').value.trim() ? m.querySelector('#key').value.trim() + '\n' : '', passphrase: m.querySelector('#pp').value,
     sudoPassword: m.querySelector('#spw').value });
   m.querySelector('#c').onclick = () => m.remove();
@@ -366,12 +467,47 @@ function editServer(s = {}) {
       else tr.innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; } };
   m.querySelector('#sv').onclick = async () => { const v = val();
     if (ctype === 'ssh' && (!v.host || !v.username)) return toast('Host and username are required', true);
-    if (ctype === 'telnet' && !v.host) return toast('Host is required', true);
+    if ((ctype === 'telnet' || ctype === 'raw') && !v.host) return toast('Host is required', true);
     if (ctype === 'serial' && !v.serialPath) return toast('Pick a serial port', true);
     if (!v.name) v.name = ctype === 'serial' ? v.serialPath : v.host; panes[focusPane].srv = await call('servers:save', v); m.remove(); refresh(); };
   if (s.id) m.querySelector('#del').onclick = async () => { if (!confirm(`Delete ${s.name}?`)) return; S(s.id).userClosed = true; await call('servers:delete', s.id); delete st[s.id]; panes.forEach(p => { if (p.srv === s.id) p.srv = null; }); m.remove(); refresh(); };
 }
+// ---------- quick connect (one-off, never saved) + app settings
+function quickDialog() {
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:430px"><header><h3>Quick connect</h3></header><div class="body">
+    <p class="muted small" style="margin-bottom:12px">Connect once without saving — the connection disappears when you disconnect.</p>
+    <label class="field"><span>Address</span><input id="qh" placeholder="192.168.1.20  or  root@192.168.1.20:2222"></label>
+    <div class="row"><label class="field grow"><span>Username</span><input id="qu" placeholder="root"></label>
+    <label class="field grow"><span>Password</span><input id="qp" type="password"></label></div><div id="qr" class="small"></div></div>
+    <footer><span class="spacer"></span><button id="c">Cancel</button><button class="primary" id="o">Connect</button></footer></div></div>`);
+  document.body.append(m); const $i = q => m.querySelector(q);
+  $i('#qh').focus(); m.querySelector('#c').onclick = () => m.remove();
+  const parse = () => { const [a, rest] = $i('#qh').value.trim().split('@'); const hasU = !!rest; const [host, port] = (rest || a).split(':');
+    return { host: host || '', port: port || 22, username: (hasU ? a : '') || $i('#qu').value.trim() || 'root', password: $i('#qp').value }; };
+  const go = async () => { const v = parse(); if (!v.host) return toast('Host is required', true);
+    $i('#o').disabled = true; $i('#o').textContent = 'Connecting…';
+    try { const id = await uc.call('conn:quick', v); m.remove(); panes[focusPane].srv = id; panes[focusPane].tab = 'terminal'; refresh(); }
+    catch (e) { const k = hostKeyErr(e);
+      if (k) { await refresh(); const s = servers.find(x => x.quick && x.host === v.host);
+        if (s && await trustPrompt(s, k)) { await call('servers:hostkey', s.id, k.fp); m.remove(); panes[focusPane].srv = s.id; connect(s.id); return; }
+        if (s) await call('servers:purgetemp', s.id); }
+      $i('#qr').innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; $i('#o').disabled = false; $i('#o').textContent = 'Connect'; } };
+  $i('#o').onclick = go; $i('#qp').onkeydown = e => e.key === 'Enter' && go(); $i('#qh').onkeydown = e => e.key === 'Enter' && go();
+}
+function settingsDialog() {
+  const cur = localStorage.getItem('uc.ttheme') || 'dark';
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:400px"><header><h3>Settings</h3></header><div class="body">
+    <label class="field"><span>Terminal theme</span><select id="tt">${Object.keys(TERM_THEMES).map(t => `<option value="${t}" ${t === cur ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></label>
+    <p class="muted small">Applies to open terminals straight away and all new tabs.</p></div>
+    <footer><span class="spacer"></span><button class="primary" id="o">Done</button></footer></div></div>`);
+  document.body.append(m);
+  m.querySelector('#tt').onchange = e => { localStorage.setItem('uc.ttheme', e.target.value); const t = termTheme();
+    for (const id in st) for (const x of S(id).terms || []) x.term.options.theme = t; };
+  m.querySelector('#o').onclick = () => m.remove();
+}
 $('#addSrv').onclick = () => editServer();
+$('#quickB').onclick = () => quickDialog();
+$('#setB').onclick = () => settingsDialog();
 $('#bakB').onclick = () => backupDialog();
 document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
 (async () => { setTimeout(() => $('#boot')?.classList.add('gone'), 6000); // never trap the UI behind the splash
