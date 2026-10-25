@@ -193,7 +193,10 @@ uc.on(d => {
     if (u.activeTerm === d.sid) u.activeTerm = u.terms[0]?.sid; if (anyPane(d.id, 'terminal')) u.redrawTerms?.(); }
   else if (d.ev === 'closed') { const s = servers.find(x => x.id === d.id); const r = s && rulesFor(s).find(x => x.metric === 'disconnect');
     if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = []; refresh(); }
-  else if (d.ev === 'progress') { let p = $('#prog'); if (!p) { p = el('<div id="prog" class="pill prog"></div>'); document.body.append(p); } p.textContent = `${d.name} ${Math.round(100 * d.t / (d.tot || 1))}%`; clearTimeout(p._t); p._t = setTimeout(() => p.remove(), 1500); }
+  else if (d.ev === 'progress') { let p = $('#prog'); if (!p) { p = el('<div id="prog" class="pill prog"></div>'); document.body.append(p); }
+    p.innerHTML = `<span>${esc(d.name)} ${d.tot ? Math.round(100 * d.t / d.tot) + '%' : fmtB(d.t)}</span><i class="pbar"><b style="width:${d.tot ? Math.round(100 * d.t / d.tot) : 0}%"></b></i>${d.cx ? '<b class="pcx" title="Cancel">✕</b>' : ''}`;
+    const x = p.querySelector('.pcx'); if (x) x.onclick = () => { uc.call('fs:cancel', d.cx).catch(() => {}); p.remove(); };
+    clearTimeout(p._t); p._t = setTimeout(() => p.remove(), 1500); }
   else if (d.ev === 'toast') toast(d.message, true);
 });
 window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !== 'terminal') continue; const u = S(p.srv); const t = u.terms.find(t => t.sid === u.activeTerm); if (t) t.fit.fit(); } });
@@ -201,7 +204,7 @@ window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !==
 // ---------- Files (SFTP): one pane per server — open a second pane to drag files between servers
 function fpane(srvId, F, onOther) {
   // F = per-pane state { cwd, sel }. Returns { node, load }. Rows are draggable onto the sibling pane.
-  F.sel ||= new Set();
+  F.sel ||= new Set(); const isLocal = srvId === '__local';
   const node = el(`<div class="fpane"><div class="row" style="margin-bottom:8px"><div class="crumbs grow" data-r="crumbs"></div>
     <button class="sm" data-r="up" title="Up one folder">↑</button><button class="sm" data-r="mk" title="New folder">+ Folder</button><button class="sm" data-r="nf" title="New file">+ File</button>
     <button class="sm" data-r="dl" title="Download selected">Download</button><button class="sm" data-r="rn" title="Rename selected">Rename</button><button class="sm danger" data-r="rm" title="Delete selected">Delete</button><button class="sm" data-r="rf" title="Refresh">⟳</button></div>
@@ -210,8 +213,8 @@ function fpane(srvId, F, onOther) {
   let items = [];
   const q = r => node.querySelector(`[data-r="${r}"]`);
   const load = async () => {
-    if (!F.cwd) F.cwd = await call('fs:home', srvId);
-    try { items = await uc.call('fs:list', srvId, F.cwd); } catch (e) { toast(e.message, true); items = []; }
+    if (!F.cwd) F.cwd = isLocal ? await uc.call('lfs:home') : await call('fs:home', srvId);
+    try { items = isLocal ? await uc.call('lfs:list', F.cwd) : await uc.call('fs:list', srvId, F.cwd); } catch (e) { toast(e.message, true); items = []; }
     F.sel.clear(); const parts = F.cwd.split('/').filter(Boolean);
     q('crumbs').innerHTML = `<a data-p="/">/</a>` + parts.map((p, i) => `<a data-p="/${parts.slice(0, i + 1).join('/')}">${esc(p)}</a><span class="muted">/</span>`).join('');
     q('crumbs').querySelectorAll('a').forEach(a => a.onclick = () => { F.cwd = a.dataset.p; load(); });
@@ -219,11 +222,12 @@ function fpane(srvId, F, onOther) {
     q('fl').querySelectorAll('tr[data-i]').forEach(r => {
       const f = items[r.dataset.i], p = pjoin(F.cwd, f.name);
       r.onclick = e => { if (!e.ctrlKey && !e.shiftKey) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); } F.sel.has(p) ? F.sel.delete(p) : F.sel.add(p); r.classList.toggle('sel', F.sel.has(p)); };
-      r.ondblclick = () => f.dir || f.link && !f.size ? (F.cwd = p, load()) : editFile(srvId, p);
-      r.ondragstart = e => { e.dataTransfer.setData('application/x-uc-row', JSON.stringify({ srv: srvId, path: p, dir: f.dir })); e.dataTransfer.effectAllowed = 'copy'; };
+      r.ondblclick = () => f.dir || f.link && !f.size ? (F.cwd = p, load()) : isLocal ? null : editFile(srvId, p);
+      r.ondragstart = e => { e.dataTransfer.setData('application/x-uc-row', JSON.stringify({ srv: srvId, path: p, dir: f.dir, local: isLocal })); e.dataTransfer.effectAllowed = 'copy'; };
     });
   };
   q('up').onclick = () => { F.cwd = pdir(F.cwd); load(); }; q('rf').onclick = load;
+  for (const r of ['mk', 'nf', 'rn', 'rm', 'dl']) if (isLocal) q(r).style.display = 'none';
   q('mk').onclick = async () => { const n = await prompt2('New folder name'); if (n) { await call('fs:mkdir', srvId, pjoin(F.cwd, n)); load(); } };
   q('nf').onclick = async () => { const n = await prompt2('New file name'); if (n) { await call('fs:write', srvId, pjoin(F.cwd, n), ''); load(); } };
   q('rn').onclick = async () => { const [p] = F.sel; if (!p) return toast('Select something first', true); const n = await prompt2('Rename to', p.split('/').pop()); if (n) { await call('fs:rename', srvId, p, pjoin(pdir(p), n)); load(); } };
@@ -238,7 +242,12 @@ function fpane(srvId, F, onOther) {
     e.preventDefault(); dragN = 0; drop.classList.add('hidden');
     const row = e.dataTransfer.getData('application/x-uc-row');
     if (row) { const r = JSON.parse(row); if (r.srv === srvId && pdir(r.path) === F.cwd) return;
-      try { await call('fs:copy', r.srv, r.path, srvId, F.cwd); toast('Copied'); } catch {} load(); onOther && onOther(); return; }
+      try {
+        if (r.local) await call('fs:upload', srvId, [r.path], F.cwd); // local file -> remote pane
+        else if (isLocal) await call('fs:downloadTo', r.srv, r.path, F.cwd); // remote file -> this device
+        else { const cx = 'c' + Date.now().toString(36); await call('fs:copy', r.srv, r.path, srvId, F.cwd, cx); } // server -> server
+        toast('Copied');
+      } catch {} load(); onOther && onOther(); return; }
     const paths = [...e.dataTransfer.files].map(f => uc.pathFor(f)).filter(Boolean);
     if (!paths.length) return; await call('fs:upload', srvId, paths, F.cwd); toast(`Uploaded ${paths.length} item(s)`); load();
   };
@@ -247,6 +256,7 @@ function fpane(srvId, F, onOther) {
 async function vFiles(s, u, v) {
   if (!s.connected) { v.innerHTML = notConn(s); return; }
   const peers = servers.filter(x => x.connected && isSsh(x));
+  if (APP.platform === 'desktop') peers.push({ id: '__local', name: 'This device', connType: 'ssh', connected: true });
   u.f1 ||= {}; u.f2 ||= {};
   if (u.peer && !peers.find(x => x.id === u.peer)) u.peer = null;
   v.innerHTML = `<div class="card files"><div class="row" style="margin-bottom:10px"><div class="card-title grow">Files</div>

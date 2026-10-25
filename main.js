@@ -190,10 +190,18 @@ h('fs:rename', (id, a, b) => S(id).rename(a, b));
 h('fs:remove', (id, p) => { log(id, 'remove', p); return S(id).remove(p); });
 h('fs:read', (id, p) => S(id).readText(p));
 h('fs:write', (id, p, t) => S(id).writeText(p, t));
-h('fs:copy', async (id, src, toId, dstDir) => { const dst = S(toId); // same-server copy -> plain cp; otherwise relay through this app
+const copies = new Map(); // cx -> { dead }
+h('fs:cancel', cx => { const c = copies.get(cx); if (c) c.dead = true; return true; });
+h('fs:copy', async (id, src, toId, dstDir, cx) => { const dst = S(toId); // same-server copy -> plain cp; otherwise relay through this app
   if (toId === id) { const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
   log(id, 'copy', `${src} -> ${toId}:${dstDir}`);
-  return S(id).copyTo(dst, String(src), String(dstDir), pr => send('ev', { id, ev: 'progress', ...pr })); });
+  const ab = { dead: false }; if (cx) copies.set(cx, ab);
+  try { return await S(id).copyTo(dst, String(src), String(dstDir), pr => send('ev', { id, ev: 'progress', cx, ...pr }), () => ab.dead); }
+  finally { copies.delete(cx); } });
+h('fs:downloadTo', async (id, remote, dir) => { await S(id).download(String(remote), String(dir), pr => send('ev', { id, ev: 'progress', ...pr })); log(id, 'download', remote); return dir; });
+h('lfs:home', () => app.getPath('home'));
+h('lfs:list', async (dir) => { const es = await fs.promises.readdir(String(dir), { withFileTypes: true });
+  return es.map(e => ({ name: e.name, size: 0, mtime: 0, dir: e.isDirectory(), link: e.isSymbolicLink() })).sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name)); });
 h('fs:upload', async (id, locals, dir) => { for (const l of locals) await S(id).upload(l, dir, pr => send('ev', { id, ev: 'progress', ...pr })); log(id, 'upload', `${locals.length} item(s) -> ${dir}`); return true; });
 h('fs:download', async (id, remotes) => {
   const r = await dialog.showOpenDialog(win, { title: 'Download to…', properties: ['openDirectory', 'createDirectory'] });

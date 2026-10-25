@@ -34,7 +34,7 @@ const hist = new History(path.join(DATA, 'logs'));
 const log = (id, ev, detail) => { if (store.setting('history', true)) { const s = store.list().find(x => x.id === id); hist.add(id, s ? s.name || s.host : '', ev, detail); } };
 
 // ---- sessions + events
-const sessions = new Map(), clients = new Set();
+const sessions = new Map(), clients = new Set(), copies = new Map();
 const emit = d => { const line = `data: ${JSON.stringify(d)}\n\n`; for (const r of clients) r.write(line); };
 const S = id => { const s = sessions.get(id); if (!s || s.closed) throw new Error('Not connected'); return s; };
 const checkFwdPort = f => { const p = Number(f.localPort);
@@ -87,8 +87,13 @@ const H = {
   'fs:home': id => S(id).home(), 'fs:list': (id, p) => S(id).list(p), 'fs:mkdir': (id, p) => S(id).mkdir(p),
   'fs:rename': (id, a, b) => S(id).rename(a, b), 'fs:remove': (id, p) => { log(id, 'remove', p); return S(id).remove(p); },
   'fs:read': (id, p) => S(id).readText(p), 'fs:write': (id, p, t) => S(id).writeText(p, t),
-  'fs:copy': async (id, src, toId, dstDir) => { if (toId === id) { const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
-    log(id, 'copy', `${src} -> ${toId}:${dstDir}`); return S(id).copyTo(S(toId), String(src), String(dstDir), pr => emit({ id, ev: 'progress', ...pr })); },
+  'fs:copy': async (id, src, toId, dstDir, cx) => { if (toId === id) { const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
+    log(id, 'copy', `${src} -> ${toId}:${dstDir}`); const ab = { dead: false }; if (cx) copies.set(cx, ab);
+    try { return await S(id).copyTo(S(toId), String(src), String(dstDir), pr => emit({ id, ev: 'progress', cx, ...pr }), () => ab.dead); }
+    finally { copies.delete(cx); } },
+  'fs:cancel': cx => { const c = copies.get(cx); if (c) c.dead = true; return true; },
+  'lfs:home': () => { throw new Error('Not available in the web version'); },
+  'lfs:list': () => { throw new Error('Not available in the web version'); },
 };
 const SEND = { 'shell:write': (id, sid, d) => sessions.get(id)?.shellWrite(sid, d), 'shell:resize': (id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r), 'shell:close': (id, sid) => sessions.get(id)?.shellClose(sid) };
 

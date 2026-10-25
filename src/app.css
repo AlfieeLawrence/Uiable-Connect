@@ -91,3 +91,44 @@ tr.hcur td { background: rgba(124,92,255,.07); }
 .boot-logo { font-size: 28px; font-weight: 700; } .boot-logo span { color: var(--muted); font-weight: 400; }
 .boot-sub { color: var(--muted); font-size: 13px; animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
+.pbar { display: inline-block; width: 90px; height: 5px; background: var(--border, #333); border-radius: 3px; overflow: hidden; vertical-align: middle; margin: 0 6px }
+.pbar b { display: block; height: 100%; background: var(--acc, #4a9eff); transition: width .2s }
+.pcx { cursor: pointer; margin-left: 6px; opacity: .7 } .pcx:hover { opacity: 1; color: #f66 }
+#peerSel, #peerSel2 { max-width: 42%; min-width: 0 }
+.files .card-title.grow { min-width: 0 }
+
+/* ---- v1.3.2 visual cleanup: calmer chrome, same layout ---- */
+:root { --border2: #262b32; }
+body { -webkit-font-smoothing: antialiased; }
+/* sidebar: quieter, tighter */
+#sidebar { border-right: 1px solid var(--border2); }
+#sidebar h3 { font-size: 11px; letter-spacing: .4px; text-transform: uppercase; opacity: .55; margin: 14px 10px 6px }
+#servers button, #servers .srv { border: none; border-radius: 8px; padding: 7px 10px; }
+#servers button:hover, #servers .srv:hover { background: rgba(255,255,255,.05) }
+/* buttons: ghost by default, solid only for .primary/.danger */
+.btn, .card-title button, .ftool button, button:not(.primary):not(.danger):not(.tab) {
+  background: transparent; border: 1px solid transparent; border-radius: 8px; }
+.btn:hover, .card-title button:hover, .ftool button:hover, button:not(.primary):not(.danger):not(.tab):hover {
+  background: rgba(255,255,255,.07); border-color: transparent; }
+/* cards: flatter, thinner borders */
+.card, .files .card, .pane .card { border: 1px solid var(--border2); border-radius: 10px; box-shadow: none; }
+.card-title { font-weight: 600; opacity: .9 }
+/* pills: neutral unless ok/err */
+.pill { background: rgba(255,255,255,.06); border: none; }
+/* tabs: less chrome */
+.tab { border-radius: 8px 8px 0 0; border: none; opacity: .75 }
+.tab.on { opacity: 1; background: rgba(255,255,255,.06) }
+/* modals + inputs */
+.modal { border: 1px solid var(--border2); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.4) }
+.modal-bg { backdrop-filter: blur(3px); }
+input, select { border: 1px solid var(--border2); border-radius: 8px; background: rgba(255,255,255,.03); }
+input:focus, select:focus { border-color: var(--acc, #4a9eff); outline: none }
+/* file rows: subtle hover instead of hard borders */
+.flist tr:hover td { background: rgba(255,255,255,.04) }
+.flist tr.sel td { background: rgba(74,158,255,.15) }
+/* crumbs bar merges with toolbar */
+.crumbs { border: none; font-size: 12px; opacity: .8 }
+/* history/log tables breathe more */
+.hist td, .hist th { padding: 5px 8px; }
+/* toasts + progress pill float above cleanly */
+#prog { box-shadow: 0 4px 14px rgba(0,0,0,.45); }
