@@ -349,7 +349,7 @@ function prompt2(title, val = '', pw = false) { return new Promise(res => {
 function vForwards(s, u, v) {
   const fw = s.forwards || [];
   const stat = id => s.fwdStatus?.find(x => x.id === id) || { active: false };
-  const pubNote = APP.fwdPorts ? ` · PC port must be published by the container (${fmtPorts(APP.fwdPorts)}); add -p mappings and set UC_FWD_PORTS for others` : '';
+  const pubNote = APP.hostNet ? ' · any PC port works (host networking)' : APP.fwdPorts ? ` · PC port must be published by the container (${fmtPorts(APP.fwdPorts)}); add -p mappings and set UC_FWD_PORTS for others` : '';
   v.innerHTML = `<div class="card"><div class="card-title grow">Port forwards <span class="muted">· "PC listens" puts a server port at localhost:port on this PC · "Server listens" puts a PC port on the server${esc(pubNote)}</span></div>
     <table class="list"><thead><tr><th>Name</th><th>Direction</th><th>Server host</th><th>Server port</th><th>PC host</th><th>PC port</th><th>Auto</th><th>Status</th><th></th></tr></thead><tbody>
     ${fw.map((f, i) => { const a = stat(f.id); const remote = f.dir === 'remote'; return `<tr data-i="${i}"><td><input data-k="name" value="${esc(f.name)}"></td>
@@ -514,9 +514,45 @@ $('#quickB').onclick = () => quickDialog();
 $('#setB').onclick = () => settingsDialog();
 $('#bakB').onclick = () => backupDialog();
 document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
+// Docker without host networking: tell the user forwards are limited to the published pool,
+// with the exact commands to unlock any port or publish more. Re-checks every 30 s so it
+// appears/disappears live when the mode changes (container recreated on/off host network).
+async function hnPoll() {
+  const i = await uc.call('app:info').catch(() => null); if (!i || i.platform !== 'web') return;
+  const was = APP.hostNet; APP.hostNet = i.hostNet; APP.fwdPorts = i.fwdPorts;
+  if (!!was !== !!APP.hostNet) { APP.hostNet ? hnHide() : hnShow(); refresh(); }
+}
+function hnShow() {
+  if ($('#hnBar')) return;
+  const b = el(`<div id="hnBar"><span>⛁ Docker mode — forwards can only use PC ports <b>${fmtPorts(APP.fwdPorts || [])}</b>. <a href="#" id="hnMore">Use any port</a></span><button class="sm" id="hnR" title="Re-check host networking">⟳</button><button class="sm" id="hnX" title="Dismiss">✕</button></div>`);
+  document.body.append(b);
+  b.querySelector('#hnX').onclick = () => b.remove();
+  b.querySelector('#hnR').onclick = hnPoll;
+  b.querySelector('#hnMore').onclick = e => { e.preventDefault(); hnDialog(); };
+}
+function hnHide() { $('#hnBar')?.remove(); }
+function hnDialog() {
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:580px"><header><h3>Use any PC port in Docker</h3></header><div class="body small">
+    <p><b>Option 1 — host networking (recommended).</b> The container shares this PC's network, so every port works:</p>
+    <p class="muted">1. Docker Desktop → <b>Settings → Resources → Network</b> → tick <b>Enable host networking</b> → Apply &amp; restart<br>
+    2. Recreate the container in host mode:</p>
+    <pre class="mono small uilog" style="max-height:none">docker compose -f docker-compose.hostnet.yml up -d</pre>
+    <p>or without compose:</p>
+    <pre class="mono small uilog" style="max-height:none">docker run -d --name uiable-connect --network host -e UC_HOST_NET=1 -v uiable-connect-data:/data ghcr.io/alfieelawrence/uiable-connect:latest</pre>
+    <p class="muted">Then click ⟳ on the banner — it disappears when host networking is detected.</p>
+    <p><b>Option 2 — publish one more port.</b> Docker can't open new PC ports on a running container, so recreate it with the port added:</p>
+    <pre class="mono small uilog" style="max-height:none">ports:
+  - "127.0.0.1:PORT:PORT"
+environment:
+  UC_FWD_PORTS: "8000-8099,PORT"
+# then: docker compose up -d</pre></div>
+    <footer><span class="spacer"></span><button class="primary" id="c">Done</button></footer></div></div>`);
+  document.body.append(m); m.querySelector('#c').onclick = () => m.remove();
+}
 (async () => { const t = termTheme(); document.documentElement.style.setProperty('--tbg', t.background); // restore terminal theme
   setTimeout(() => $('#boot')?.classList.add('gone'), 6000); // never trap the UI behind the splash
-  APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); $('#boot')?.classList.add('gone'); })();
+  APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); $('#boot')?.classList.add('gone');
+  if (APP.platform === 'web') { if (!APP.hostNet && localStorage.getItem('uc.hn.dismiss') !== '1') hnShow(); setInterval(hnPoll, 30000); } })();
 
 // ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure
 (async function checkUpdate() {

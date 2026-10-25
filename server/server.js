@@ -12,6 +12,7 @@ const FWD_BIND = process.env.UC_FWD_BIND || '0.0.0.0'; // forwards listen inside
 // A container can't open arbitrary ports on the PC: each forward's PC-side port must be published
 // at `docker run` / compose time. UC_FWD_PORTS tells the app which PC ports are published so it can
 // warn before you pick one Docker can't deliver. Default matches docker-compose.yml (8080-8090).
+const HOST_NET = process.env.UC_HOST_NET === '1'; // host networking: no port mapping needed, any PC port works
 const FWD_PORTS = new Set();
 for (const part of (process.env.UC_FWD_PORTS || '8000-8099').split(',')) {
   const m = part.trim().match(/^(\d+)(?:-(\d+))?$/); if (!m) continue;
@@ -38,8 +39,8 @@ const log = (id, ev, detail) => { if (store.setting('history', true)) { const s 
 const sessions = new Map(), clients = new Set(), copies = new Map();
 const emit = d => { const line = `data: ${JSON.stringify(d)}\n\n`; for (const r of clients) r.write(line); };
 const S = id => { const s = sessions.get(id); if (!s || s.closed) throw new Error('Not connected'); return s; };
-const checkFwdPort = f => { const p = Number(f.localPort);
-  if (!FWD_PORTS.has(p)) throw new Error(`Port ${p} isn't published by the container. Add -p ${p}:${p} (or the matching ports: line in compose) and set UC_FWD_PORTS to include it.`); };
+const checkFwdPort = f => { if (HOST_NET) return; const p = Number(f.localPort);
+  if (!FWD_PORTS.has(p)) throw new Error(`Port ${p} isn't published by the container. Add -p ${p}:${p} (or the matching ports: line in compose) and set UC_FWD_PORTS to include it. Or switch to host networking — see docker-compose.yml.`); };
 const latestUiable = async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
   if (!r.ok) return null; const j = await r.json(); const a = (j.assets || []).find(x => x.name === 'uiable.zip');
   return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; };
@@ -97,7 +98,7 @@ const H = {
     if (!r.ok) return null; const j = await r.json(); return { current: VERSION, latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url }; },
   'app:selfupdate': () => ({ docker: true }), // update = pull the new image; the UI shows the commands
   'app:version': () => VERSION,
-  'app:info': () => ({ platform: 'web', os: 'docker', fwdPorts: [...FWD_PORTS].sort((a, b) => a - b) }),
+  'app:info': () => ({ platform: 'web', os: 'docker', hostNet: HOST_NET, fwdPorts: HOST_NET ? [] : [...FWD_PORTS].sort((a, b) => a - b) }),
   'history:list': n => hist.list(Math.min(Number(n) || 300, 2000)),
   'history:clear': () => hist.clear(),
   'history:get': () => store.setting('history', true),

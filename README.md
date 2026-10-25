@@ -96,3 +96,17 @@ electron-builder signs the exe/installer automatically when cert env vars are se
 
 ## Installer (Windows)
 The release also builds `Uiable-Connect-Setup-x.y.z.exe` (NSIS): choose install dir, Start Menu + desktop shortcut, installs once — no temp extraction each launch, so it starts faster than the portable exe.
+
+## Install (Docker, one line)
+
+**Linux / macOS:**
+```sh
+curl -fsSL https://raw.githubusercontent.com/AlfieeLawrence/uiable-connect/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/AlfieeLawrence/uiable-connect/main/install.ps1 | iex
+```
+
+The installer tries **host networking** first — forwards get any PC port with nothing to publish (Docker Desktop ≥ 4.34 or plain Linux Docker; the Windows script even flips the setting for you). If the daemon refuses, it falls back to the **port pool** (PC ports 8000–8099), which works everywhere. The web UI tells you which mode you're in and how to unlock the rest. Then open http://localhost:8484.

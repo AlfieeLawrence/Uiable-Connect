@@ -5,14 +5,17 @@ services:
     # build: .            # or build it from this folder
     container_name: uiable-connect
     restart: unless-stopped
+    # Any-PC-port mode: Docker Desktop >= 4.34 — turn on Settings > Resources > Network >
+    # "Enable host networking", then use these two lines INSTEAD of the ports: block below.
+    # Forwards then listen straight on your PC — any port, nothing to publish.
+    # network_mode: host
+    # (and set UC_HOST_NET: "1" in environment so the app knows ports are unrestricted)
     ports:
       - "127.0.0.1:8484:8484"        # the web UI, only on this computer
       # Port forwards (tunnels) listen inside the container. Docker can't open new PC ports at
       # runtime, so a POOL is published once: the app claims/frees ports from it as forwards
       # start/stop — you never pick one by hand. Widen/narrow the range + UC_FWD_PORTS together.
       - "127.0.0.1:8000-8099:8000-8099"   # 100 PC ports for forwards
-      # Alternative on Linux (NOT Docker Desktop): host networking removes all mapping —
-      # `network_mode: host` above instead of ports: gives forwards truly dynamic PC ports.
     environment:
       # UC_PASSWORD: "change-me"     # optional login; REQUIRED if you publish on anything but 127.0.0.1
       # UC_SECRET: "long random string"  # optional: key for saved passwords (default: random key in the volume)

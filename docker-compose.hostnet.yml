@@ -1,0 +1,28 @@
+# Uiable Connect in Docker, HOST-NETWORK MODE — forwards get ANY PC port with nothing to publish.
+#   docker compose -f docker-compose.hostnet.yml up -d    then open http://localhost:8484
+#
+# Requires Docker Desktop >= 4.34 with "Enable host networking" ON
+# (Settings > Resources > Network), or plain Docker on Linux.
+# Without that setting the app will NOT be reachable — use docker-compose.yml instead.
+#
+# Security note: the container shares your PC's network stack — set UC_PASSWORD, and set
+# UC_FWD_BIND=127.0.0.1 if other machines on your LAN should not reach your tunnels.
+services:
+  uiable-connect:
+    image: ghcr.io/alfieelawrence/uiable-connect:latest
+    # build: .
+    container_name: uiable-connect
+    restart: unless-stopped
+    network_mode: host                 # no port mapping — the app binds straight on this PC
+    environment:
+      UC_HOST_NET: "1"                 # tells the app every PC port is allowed (no publish checks)
+      UC_FWD_BIND: "127.0.0.1"         # tunnels only on localhost; use 0.0.0.0 to share on the LAN
+      # UC_PASSWORD: "change-me"       # strongly recommended in host mode
+      # UC_SECRET: "long random string"
+      # PORT: "8484"                   # change the web UI port if 8484 is taken
+      TZ: Europe/London
+    volumes:
+      - uiable-connect-data:/data
+    mem_limit: 192m
+volumes:
+  uiable-connect-data:

@@ -231,3 +231,7 @@ button.primary:hover { filter: brightness(1.08); }
 .side-foot button:not(.primary) { flex: 1; min-width: 0; padding: 8px 4px; }
 /* terminal container follows the chosen theme */
 .termhost { background: var(--tbg, #0b0d14); }
+
+/* Docker host-network banner (dismissible) */
+#hnBar { position: fixed; top: 52px; left: 50%; transform: translateX(-50%); z-index: 140; display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 14px; background: var(--card-solid); border: 1px solid var(--border2); border-radius: 999px; box-shadow: var(--shadow); font-size: 12.5px; max-width: calc(100vw - 24px); }
+#hnBar a { white-space: nowrap; }
