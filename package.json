@@ -1,9 +1,9 @@
 {
   "name": "uiable-connect",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Uiable Connect - saved servers, SSH tunnels, terminal, files and stats for any Linux server",
   "main": "main.js",
-  "author": "Alfie Lawrence",
+  "author": "XTechInd",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -22,7 +22,7 @@
   },
   "build": {
     "npmRebuild": false,
-    "appId": "com.alfie.uiableconnect",
+    "appId": "com.xtechind.uiableconnect",
     "productName": "Uiable Connect",
     "files": [
       "main.js",
@@ -46,10 +46,19 @@
     "win": {
       "signAndEditExecutable": true,
       "target": [
+        "nsis",
         "portable",
         "zip"
       ],
       "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Uiable Connect"
     },
     "directories": {
       "output": "dist",

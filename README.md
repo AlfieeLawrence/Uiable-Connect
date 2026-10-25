@@ -90,3 +90,9 @@ git tag v1.1.0 && git push --tags
 
 You can also start it from the Actions tab with **Run workflow**. Leave the tag empty to only build, and download the files from the run's artifacts.
 
+
+## Code signing (Windows)
+electron-builder signs the exe/installer automatically when cert env vars are set — locally: `CSC_LINK=C:\path\cert.pfx` and `CSC_KEY_PASSWORD=...` before `npm run dist`; in CI add repo secrets `WIN_CSC_LINK` (base64-encoded .pfx) and `WIN_CSC_KEY_PASSWORD`. Without them builds stay unsigned (Smart App Control/SmartScreen warnings). For a personal-use workaround, make a self-signed cert and add it to your own Trusted Root store — that silences prompts on your machine only. macOS builds are ad-hoc signed (identifier `com.xtechind.uiableconnect`); a real Developer ID signature needs a paid Apple dev account.
+
+## Installer (Windows)
+The release also builds `Uiable-Connect-Setup-x.y.z.exe` (NSIS): choose install dir, Start Menu + desktop shortcut, installs once — no temp extraction each launch, so it starts faster than the portable exe.

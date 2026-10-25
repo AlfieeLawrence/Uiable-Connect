@@ -15,7 +15,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 if (process.platform === 'darwin') Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' },
   { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] }, { role: 'windowMenu' }]));
 else Menu.setApplicationMenu(null);
-if (process.platform === 'win32') app.setAppUserModelId('com.alfie.uiableconnect'); // needed for Windows toast notifications
+if (process.platform === 'win32') app.setAppUserModelId('com.xtechind.uiableconnect'); // needed for Windows toast notifications
 
 let win, store, hist; const sessions = new Map(); // serverId -> Session
 const enc = s => safeStorage.isEncryptionAvailable() ? 'e:' + safeStorage.encryptString(s).toString('base64') : 'p:' + Buffer.from(s).toString('base64');
@@ -133,7 +133,11 @@ h('app:selfupdate', async () => {
     if (!res.ok || !res.body) throw new Error('Download failed'); const w = fs.createWriteStream(dest);
     for await (const c of res.body) w.write(c); await new Promise((ok, no) => { w.end(ok); w.on('error', no); }); };
   if (process.platform === 'win32') {
-    const a = assets.find(x => /\.exe$/i.test(x.name)); if (!a) throw new Error('No Windows download in the latest release');
+    // Installed (nsis) app: run the new Setup exe so it upgrades in place. Portable: swap the exe next to the old one.
+    const portable = !!process.env.PORTABLE_EXECUTABLE_DIR;
+    const a = assets.find(x => portable ? /\.exe$/i.test(x.name) && !/setup|nsis/i.test(x.name) : /setup|nsis/i.test(x.name) && /\.exe$/i.test(x.name))
+      || assets.find(x => /\.exe$/i.test(x.name));
+    if (!a) throw new Error('No Windows download in the latest release');
     // A portable build runs from %TEMP%, so the real exe dir comes from PORTABLE_EXECUTABLE_DIR.
     let dir = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
     if (dir.startsWith(app.getPath('temp')) || !fs.existsSync(dir) || (() => { try { fs.accessSync(dir, fs.constants.W_OK); return false; } catch { return true; } })()) dir = path.join(app.getPath('userData'), 'updates');

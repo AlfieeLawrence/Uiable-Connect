@@ -358,7 +358,7 @@ function editServer(s = {}) {
 $('#addSrv').onclick = () => editServer();
 $('#bakB').onclick = () => backupDialog();
 document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
-(async () => { APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); })();
+(async () => { APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); $('#boot')?.classList.add('gone'); })();
 
 // ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure
 (async function checkUpdate() {

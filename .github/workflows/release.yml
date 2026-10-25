@@ -32,8 +32,12 @@ jobs:
       # own installer so the Electron binary electron-builder needs is downloaded.
       - run: npm ci --ignore-scripts
       - run: node node_modules/electron/install.js
-      - run: npx electron-builder --win portable zip --x64 --publish never
-        env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+      - run: npx electron-builder --win nsis portable zip --x64 --publish never
+        # signs when the CSC_* secrets are set (base64 .pfx + password); builds unsigned otherwise
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows

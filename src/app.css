@@ -83,3 +83,11 @@ table.list input { padding: 5px 8px; }
 tr.hcur td { background: rgba(124,92,255,.07); }
 .pill.small { font-size: 11px; padding: 2px 8px; }
 @media (max-width: 760px) { #panes.split { flex-direction: column; } .fcols.two { flex-direction: column; } }
+
+/* ---------- boot splash */
+#boot { position: fixed; inset: 0; z-index: 500; display: grid; place-content: center; gap: 10px; text-align: center;
+  background: #0b0d14; transition: opacity .25s; }
+#boot.gone { opacity: 0; pointer-events: none; }
+.boot-logo { font-size: 28px; font-weight: 700; } .boot-logo span { color: var(--muted); font-weight: 400; }
+.boot-sub { color: var(--muted); font-size: 13px; animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
