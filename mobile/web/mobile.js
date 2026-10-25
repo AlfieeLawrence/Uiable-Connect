@@ -55,7 +55,7 @@
 
   function decorate() {
     const m = document.getElementById('main');
-    const head = m.querySelector('.pane > .row') || m.querySelector(':scope > .row');
+    const head = m.querySelector('.pane > .pane-head') || m.querySelector('.pane > .row') || m.querySelector(':scope > .row');
     if (head && !head.querySelector('.burger')) head.prepend(burger());
     if (!m.querySelector('.burger')) { const e = m.querySelector('.empty > div'); if (e) e.prepend(burger()); }
     const v = document.getElementById('view'); if (!v) return;

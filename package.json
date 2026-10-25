@@ -1,6 +1,6 @@
 {
   "name": "uiable-connect",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Uiable Connect - saved servers, SSH tunnels, terminal, files and stats for any Linux server",
   "main": "main.js",
   "author": "XTechInd",

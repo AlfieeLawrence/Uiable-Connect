@@ -90,10 +90,10 @@ function renderPane(sec, p, i) {
     return;
   }
   const u = S(s.id), tabs = TABS(s);
-  sec.innerHTML = `<div class="row"><div class="grow" style="min-width:0"><h2 class="ellipsis">${esc(s.name || s.host || s.serialPath)}</h2><div class="muted small mono">${connLabel(s)}${isSsh(s) ? ' · ' + ({ password: 'password', key: 'SSH key', keypass: 'key + password' }[s.auth] || s.auth) : ''}</div></div>
+  sec.innerHTML = `<div class="pane-head"><span class="pdot ${s.connected ? 'on' : ''}"></span><div class="grow" style="min-width:0"><div class="ph-name ellipsis">${esc(s.name || s.host || s.serialPath)}</div><div class="ph-sub ellipsis">${connLabel(s)}${isSsh(s) ? ' · ' + ({ password: 'password', key: 'SSH key', keypass: 'key + password' }[s.auth] || s.auth) : ''}</div></div>
     ${panes.length > 1 ? '<button class="sm" id="pclose" title="Close this pane">✕</button>' : ''}
-    ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side">⿻ Split</button>' : ''}
-    <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : '<button class="primary" id="conn">Connect</button>'}</div>
+    ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side">⿻</button>' : ''}
+    <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : '<button class="primary sm" id="conn">Connect</button>'}</div>
     <div class="tabs"><div class="seg">${tabs.map(t => `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
     <div class="view" id="view"></div>`;
   $('#edit', sec).onclick = () => editServer(s);
@@ -205,11 +205,9 @@ window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !==
 function fpane(srvId, F, onOther) {
   // F = per-pane state { cwd, sel }. Returns { node, load }. Rows are draggable onto the sibling pane.
   F.sel ||= new Set(); const isLocal = srvId === '__local';
-  const node = el(`<div class="fpane"><div class="row" style="margin-bottom:8px"><div class="crumbs grow" data-r="crumbs"></div>
-    <button class="sm" data-r="up" title="Up one folder">↑</button><button class="sm" data-r="mk" title="New folder">+ Folder</button><button class="sm" data-r="nf" title="New file">+ File</button>
-    <button class="sm" data-r="dl" title="Download selected">Download</button><button class="sm" data-r="rn" title="Rename selected">Rename</button><button class="sm danger" data-r="rm" title="Delete selected">Delete</button><button class="sm" data-r="rf" title="Refresh">⟳</button></div>
-    <div class="scroll flist"><table class="list"><tbody data-r="fl"></tbody></table></div>
-    <p class="muted small" style="margin:8px 0 0">Drag files onto this list to upload · ${onOther ? 'drag a row onto the other pane to copy between servers · ' : ''}double-click a file to edit it</p></div>`);
+  const node = el(`<div class="fpane"><div class="fhead"><button class="sm" data-r="up" title="Up one folder">↑</button><div class="crumbs grow" data-r="crumbs"></div><button class="sm" data-r="rf" title="Refresh">⟳</button></div>
+    <div class="fhead2" data-r="tools"><button class="sm" data-r="mk" title="New folder">+ Folder</button><button class="sm" data-r="nf" title="New file">+ File</button><span class="spacer"></span><button class="sm" data-r="dl" title="Download selected">Download</button><button class="sm" data-r="rn" title="Rename selected">Rename</button><button class="sm danger" data-r="rm" title="Delete selected">Delete</button></div>
+    <div class="scroll flist"><table class="list"><tbody data-r="fl"></tbody></table></div></div>`);
   let items = [];
   const q = r => node.querySelector(`[data-r="${r}"]`);
   const load = async () => {
@@ -227,7 +225,7 @@ function fpane(srvId, F, onOther) {
     });
   };
   q('up').onclick = () => { F.cwd = pdir(F.cwd); load(); }; q('rf').onclick = load;
-  for (const r of ['mk', 'nf', 'rn', 'rm', 'dl']) if (isLocal) q(r).style.display = 'none';
+  if (isLocal) q('tools').style.display = 'none';
   q('mk').onclick = async () => { const n = await prompt2('New folder name'); if (n) { await call('fs:mkdir', srvId, pjoin(F.cwd, n)); load(); } };
   q('nf').onclick = async () => { const n = await prompt2('New file name'); if (n) { await call('fs:write', srvId, pjoin(F.cwd, n), ''); load(); } };
   q('rn').onclick = async () => { const [p] = F.sel; if (!p) return toast('Select something first', true); const n = await prompt2('Rename to', p.split('/').pop()); if (n) { await call('fs:rename', srvId, p, pjoin(pdir(p), n)); load(); } };
@@ -259,7 +257,7 @@ async function vFiles(s, u, v) {
   if (APP.platform === 'desktop') peers.push({ id: '__local', name: 'This device', connType: 'ssh', connected: true });
   u.f1 ||= {}; u.f2 ||= {};
   if (u.peer && !peers.find(x => x.id === u.peer)) u.peer = null;
-  v.innerHTML = `<div class="card files"><div class="row" style="margin-bottom:10px"><div class="card-title grow">Files</div>
+  v.innerHTML = `<div class="files"><div class="fbar"><b>Files</b><span class="spacer"></span>
     ${u.peer ? `<select id="peerSel">${peers.map(x => `<option value="${x.id}" ${x.id === u.peer ? 'selected' : ''}>${esc(x.name || x.host)}</option>`).join('')}</select>` : ''}
     <button class="sm" id="twoP">${u.peer ? 'Single pane' : '⇄ Two panes'}</button></div><div class="fcols ${u.peer ? 'two' : ''}" id="fcols"></div></div>`;
   const cols = $('#fcols', v);
@@ -324,12 +322,14 @@ function editServer(s = {}) {
       <label class="field" style="width:130px"><span>Baud</span><select id="bd">${[300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map(b => `<option ${b === (s.baudRate || 115200) ? 'selected' : ''}>${b}</option>`).join('')}</select></label></div>
       <div class="row" style="margin:-4px 0 12px"><button class="sm" id="spr">⟳ Refresh ports</button><span class="muted small">USB and paired Bluetooth devices appear as COM/serial ports</span></div></div>
     <div id="ctSsh">
+    <div class="msec">Sign in</div>
     <label class="field"><span>Username</span><input id="u" value="${esc(s.username)}"></label>
     <div class="seg" style="margin-bottom:12px"><button data-a="password">Password</button><button data-a="key">SSH key</button><button data-a="keypass">Key + password</button></div>
     <div id="pw"><label class="field"><span>Password</span><input id="pass" type="password" placeholder="${s.has_password ? '•••••• saved (leave blank to keep)' : ''}"></label></div>
     <div id="ky"><label class="field"><span>Private key ${s.keyName ? '· ' + esc(s.keyName) : ''}</span><textarea id="key" rows="4" class="mono" placeholder="${s.has_privateKey ? 'Key saved (leave blank to keep). ' : ''}Paste -----BEGIN OPENSSH PRIVATE KEY----- …"></textarea></label>
       <div class="row" style="margin:-4px 0 12px"><button class="sm" id="pick">Choose key file…</button><span class="muted small" id="kn"></span></div>
       <label class="field"><span>Key passphrase (optional)</span><input id="pp" type="password" placeholder="${s.has_passphrase ? '•••••• saved' : ''}"></label></div>
+    <div class="msec">Admin</div>
     <label class="field"><span>sudo password (optional)</span><input id="spw" type="password" placeholder="${s.has_sudoPassword ? '•••••• saved (leave blank to keep)' : 'Leave blank to use your login password'}"></label>
     <p class="muted small">Passwords and keys are encrypted on this device and never leave it. With "Key + password" the key is tried first and the password is the fallback.</p><div id="tr" class="small"></div>
     </div></div>
