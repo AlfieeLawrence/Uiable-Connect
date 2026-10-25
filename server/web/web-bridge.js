@@ -17,7 +17,7 @@
     'notify:permission': async () => 'Notification' in window && (Notification.permission === 'granted' || (await Notification.requestPermission()) === 'granted'),
     'notify': async ({ title, body }) => { if (!('Notification' in window) || Notification.permission !== 'granted') return false; const n = new Notification(title, { body, icon: 'favicon.svg' }); n.onclick = () => { window.focus(); n.close(); }; return true; },
     'app:open': async url => { if (/^https:\/\/github\.com\//.test(url)) window.open(url, '_blank', 'noopener'); },
-    'uiable:open': async (id, mode) => { const r = await remote('uiable:open', [id, mode]); const url = `${location.protocol}//${location.hostname}:${r.port}/`; window.open(url, '_blank', 'noopener'); return url; },
+    'uiable:open': async (id, mode, port) => { const r = await remote('uiable:open', [id, mode, port]); const url = `${location.protocol}//${location.hostname}:${r.port}/`; window.open(url, '_blank', 'noopener'); return url; },
   };
   async function remote(ch, a) { const r = await post('api/call', { ch, a }); if (r.status === 401) { location.href = 'login'; throw new Error('Signed out'); }
     const j = await r.json(); if (!j.ok) throw new Error(j.error); return j.data; }

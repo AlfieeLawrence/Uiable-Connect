@@ -72,47 +72,47 @@ async function uiInstallState(s, u) {
   u.uiInst = { ...i, installed: !!(i.files || i.running || u.uiable?.isUiable), cur, latest };
   return u.uiInst;
 }
-async function uiInstallButton(s, u) {
-  const box = $('#uiInst'); if (!box || !s.connected) return;
+async function uiInstallButton(s, u, pill) {
+  const box = (pill || document).querySelector('#uiInst'); if (!box || !s.connected) return;
   if (!u.uiInst) { try { await uiInstallState(s, u); } catch { return; } }
-  if (cur !== s.id || !$('#uiInst')) return;
+  if (!box.isConnected) return;
   const i = u.uiInst, L = i.latest;
   if (!L) { box.innerHTML = i.installed ? `<span class="pill small">Uiable ${esc(i.cur)}</span>` : ''; return; }
   const label = !i.installed ? `Install Uiable ${esc(L.version)}` : vNewer(L.version, i.cur || '0') ? `Update Uiable to ${esc(L.version)}` : '';
-  $('#uiInst').innerHTML = label ? `<button class="sm ${i.installed ? 'primary' : ''}" id="uiGo">${label}</button>` : `<span class="pill ok small">Uiable ${esc(i.cur)} · up to date</span>`;
-  if ($('#uiGo')) $('#uiGo').onclick = () => uiInstallRun(s, u);
+  box.innerHTML = label ? `<button class="sm ${i.installed ? 'primary' : ''}" id="uiGo">${label}</button>` : `<span class="pill ok small">Uiable ${esc(i.cur)} · up to date</span>`;
+  if (box.querySelector('#uiGo')) box.querySelector('#uiGo').onclick = () => uiInstallRun(s, u);
 }
 async function uiInstallRun(s, u) {
   let i; try { i = await uiInstallState(s, u); } catch (e) { return toast(e.message, true); }
   const L = i.latest; if (!L || !L.url) return toast("Couldn't find the latest Uiable release on GitHub", true);
   const update = i.installed;
   const miss = !(i.curl || i.wget) ? 'Neither curl nor wget is installed on this server.' : i.priv === 'none' ? 'This needs root, and sudo is not available for this user.' : '';
+  const needPw = i.priv === 'password' && !s.has_sudoPassword;
   const m = el(`<div class="modal-bg"><div class="modal" style="width:720px"><header><h3 class="grow">${update ? `Update Uiable ${esc(i.cur)} → ${esc(L.version)}` : `Install Uiable ${esc(L.version)}`}</h3></header><div class="body">
     ${miss ? `<p class="pill err" style="display:block">${miss} </p>` : `
     <p>This downloads <span class="mono">${esc(L.url.split('/').pop())}</span> from the Uiable GitHub release onto the server, unpacks it into <span class="mono">${UI_DIR}</span> and runs Uiable's own <span class="mono">install.sh</span> (<span class="mono">docker compose up -d --build</span>).</p>
     <ul class="small">${!i.docker ? `<li><b>Docker isn't installed; it will be installed first</b> (Docker's official get.docker.com script on Debian/Ubuntu/Raspbian/Fedora/CentOS/RHEL, apk on Alpine, pacman on Arch), started, and ${esc(s.username)} is added to the docker group. Other systems stop with a message.</li>` : !i.compose ? `<li class="err">Docker is installed but Docker Compose is missing. Uiable Connect won't change an existing Docker install, so install the compose plugin first.</li>` : ''}<li>${update ? `Your accounts, settings and layouts stay: they live in the Docker volume <span class="mono">uiable-data</span>, which is never removed. The current folder and <span class="mono">.env</span> are backed up to <span class="mono">${UI_DIR}.backup-&lt;date&gt;.tar.gz</span> first, and the same port is kept.` : `Uiable will listen on 127.0.0.1:8080 on the server; open it here through the SSH tunnel.`}</li>
-    <li>It needs root. ${i.priv === 'root' ? 'You are root.' : i.priv === 'nopass' ? 'Passwordless sudo will be used.' : 'Enter your sudo password below; it is sent to sudo over the SSH connection and is not stored or logged.'}</li><li>Building takes a few minutes on small servers.</li></ul>
-    ${i.priv === 'password' ? `<label class="field"><span>sudo password for ${esc(s.username)}</span><input type="password" id="sp" autocomplete="off"></label>` : ''}`}
+    <li>It needs root. ${i.priv === 'root' ? 'You are root.' : i.priv === 'nopass' ? 'Passwordless sudo will be used.' : s.has_sudoPassword ? 'Your saved sudo password will be used.' : 'Enter your sudo password below; it is sent to sudo over the SSH connection and is not stored or logged.'}</li><li>Building takes a few minutes on small servers.</li></ul>
+    ${needPw ? `<label class="field"><span>sudo password for ${esc(s.username)}</span><input type="password" id="sp" autocomplete="off"></label>` : ''}`}
     <pre class="mono small uilog hidden"></pre></div>
     <footer><span class="muted small" id="uist"></span><span class="spacer"></span><button id="c">Close</button>${miss ? '' : `<button class="primary" id="go">${update ? 'Update' : 'Install'}</button>`}</footer></div></div>`);
   document.body.append(m); const log = m.querySelector('.uilog'), stl = m.querySelector('#uist'); let running = false;
   m.querySelector('#c').onclick = () => { if (running && !confirm('The install keeps running on the server. Close this window?')) return; m.remove(); };
   if (miss) return;
   m.querySelector('#go').onclick = async () => {
-    const pw = m.querySelector('#sp')?.value || ''; if (i.priv === 'password' && !pw) return toast('Enter the sudo password', true);
+    const pw = m.querySelector('#sp')?.value || ''; if (needPw && !pw) return toast('Enter the sudo password', true);
     running = true; m.querySelector('#go').disabled = true; log.classList.remove('hidden'); log.textContent = ''; stl.textContent = 'Running…';
-    const dir = (i.home || '~') + '/.uiable-connect', job = dir + '/uiable-job.sh', out = dir + '/uiable-job.log', pf = dir + '/.p';
+    const dir = (i.home || '~') + '/.uiable-connect', job = dir + '/uiable-job.sh', out = dir + '/uiable-job.log';
     const q = x => "'" + x.replace(/'/g, `'\\''`) + "'";
     try {
       await uc.call('exec', s.id, `mkdir -p -m 700 ${q(dir)} && chmod 700 ${q(dir)} && rm -f ${q(out)}`, 15000);
       await uc.call('fs:write', s.id, job, UI_JOB(L.url, L.version, s.username));
       const run = `nohup sh -c 'sh ${job.replace(/'/g, '')} ; echo "@@EXIT $?"' > ${q(out)} 2>&1 < /dev/null &`;
-      let cmd;
-      if (i.priv === 'root') cmd = run;
-      else if (i.priv === 'nopass') cmd = `sudo -n sh -c ${q(run)}`;
-      else { await uc.call('fs:write', s.id, pf, pw + '\n'); // inside the 700 folder, read once by sudo -S then deleted
-        cmd = `exec 3< ${q(pf)}; rm -f ${q(pf)}; sudo -S -p '' sh -c ${q(run)} <&3`; }
-      const r = await uc.call('exec', s.id, cmd, 30000);
+      // sudo goes through the app: the saved (or one-off) password reaches sudo's stdin via a file
+      // descriptor, never on a command line and never in the job log
+      const r = i.priv === 'root' ? await uc.call('exec', s.id, run, 30000)
+        : i.priv === 'nopass' ? await uc.call('exec', s.id, `sudo -n sh -c ${q(run)}`, 30000)
+        : await uc.call('sudo:exec', s.id, run, pw || undefined);
       if (r.code) throw new Error(/incorrect|try again|Sorry/i.test(r.err || '') ? 'Wrong sudo password' : (r.err || 'Could not start the installer').trim());
       let off = 0, code = null, idle = 0;
       while (code == null && document.body.contains(m)) {
@@ -125,12 +125,12 @@ async function uiInstallRun(s, u) {
       }
       if (code == null) return;
       stl.textContent = code === 0 ? 'Finished' : `Failed (exit ${code})`;
-      u.uiInst = null; u.uiable = await uc.call('uiable:detect', s.id).catch(() => null); uiPill();
+      u.uiInst = null; u.uiable = await uc.call('uiable:detect', s.id).catch(() => null); refresh();
       if (code === 0) { toast(update ? 'Uiable updated' : 'Uiable installed');
-        const b = el('<button class="primary">Open dashboard</button>'); b.onclick = () => { m.remove(); openUi('window'); }; m.querySelector('footer').append(b); }
+        const b = el('<button class="primary">Open dashboard</button>'); b.onclick = () => { m.remove(); openUi(s.id, 'window'); }; m.querySelector('footer').append(b); }
       else toast('Uiable install failed, see the log', true);
     } catch (e) { stl.textContent = 'Failed'; toast(e.message, true); m.querySelector('#go').disabled = false; }
-    finally { running = false; uc.call('exec', s.id, `rm -f ${q(pf)}`, 10000).catch(() => {}); }
+    finally { running = false; }
   };
 }
 if (typeof module !== 'undefined') module.exports = { UI_DETECT, UI_JOB, kv };

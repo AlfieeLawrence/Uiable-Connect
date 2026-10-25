@@ -1,6 +1,6 @@
 {
   "name": "uiable-connect",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Uiable Connect - saved servers, SSH tunnels, terminal, files and stats for any Linux server",
   "main": "main.js",
   "author": "Alfie Lawrence",
@@ -12,9 +12,9 @@
     "dist:mac": "electron-builder --mac dmg zip --x64 --arm64"
   },
   "dependencies": {
-    "ssh2": "^1.16.0",
+    "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "@xterm/addon-fit": "^0.10.0"
+    "ssh2": "^1.16.0"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -35,6 +35,9 @@
       "!**/util/**"
     ],
     "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ],
     "compression": "maximum",
     "electronLanguages": [
       "en-GB",
@@ -68,5 +71,8 @@
   },
   "allowScripts": {
     "electron@33.4.11": true
+  },
+  "optionalDependencies": {
+    "serialport": "^13.0.0"
   }
 }

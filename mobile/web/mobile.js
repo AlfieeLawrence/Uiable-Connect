@@ -35,25 +35,27 @@
     row.addEventListener('pointerdown', e => e.preventDefault()); // keep the on-screen keyboard open
     row.onclick = e => { const b = e.target.closest('button'); if (!b) return; const k = decodeURIComponent(b.dataset.s);
       if (k === 'ctrl') return setCtrl(!ctrl);
-      if (k === 'paste') { const t = S(cur).terms.find(t => t.sid === S(cur).activeTerm); if (t) navigator.clipboard.readText().then(x => x && t.term.paste(x), () => toast('Clipboard not available', true)); return; }
-      const u = S(cur); const sid = u.activeTerm; if (!sid) return; send0('shell:write', cur, sid, k); u.terms.find(t => t.sid === sid)?.term.focus(); };
+      if (k === 'paste') { const t = S(cur()).terms.find(t => t.sid === S(cur()).activeTerm); if (t) navigator.clipboard.readText().then(x => x && t.term.paste(x), () => toast('Clipboard not available', true)); return; }
+      const u = S(cur()); const sid = u.activeTerm; if (!sid) return; send0('shell:write', cur(), sid, k); u.terms.find(t => t.sid === sid)?.term.focus(); };
     v.querySelector('.termwrap').append(row);
   }
 
   // ---- files: Upload button (device picker) + tap-again-to-open (no double click on touch)
   function filesExtras(v) {
-    const dl = v.querySelector('#dl'); if (!dl || v.querySelector('#upl')) return;
-    const b = document.createElement('button'); b.className = 'sm primary'; b.id = 'upl'; b.textContent = '⇪ Upload'; dl.before(b);
-    b.onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.multiple = true;
-      i.onchange = async () => { const f = [...i.files]; if (!f.length) return; await uc.call('fs:upload', cur, f, S(cur).cwd).then(() => toast(`Uploaded ${f.length} item(s)`), e => toast(e.message, true)); v.querySelector('#rf').click(); }; i.click(); };
-    const fl = v.querySelector('#fl');
-    fl.addEventListener('click', e => { const r = e.target.closest('tr[data-i]'); if (r && r.classList.contains('sel') && S(cur).sel.size === 1) { e.stopImmediatePropagation(); r.ondblclick(); } }, true);
-    const hint = v.querySelector('.files > p.muted'); if (hint && !hint.dataset.mob) hint.dataset.mob = '1', hint.textContent = 'Tap to select · tap again to open or edit · Upload picks from Photos/Files';
+    v.querySelectorAll('.fpane').forEach(fp => {
+      const dl = fp.querySelector('[data-r="dl"]'); if (!dl || fp.querySelector('#upl')) return;
+      const b = document.createElement('button'); b.className = 'sm primary'; b.id = 'upl'; b.textContent = '⇪ Upload'; dl.before(b);
+      b.onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.multiple = true;
+        i.onchange = async () => { const f = [...i.files]; if (!f.length) return; await uc.call('fs:upload', cur(), f, S(cur()).f1.cwd).then(() => toast(`Uploaded ${f.length} item(s)`), e => toast(e.message, true)); fp.querySelector('[data-r="rf"]').click(); }; i.click(); };
+      const fl = fp.querySelector('[data-r="fl"]');
+      fl.addEventListener('click', e => { const r = e.target.closest('tr[data-i]'); if (r && r.classList.contains('sel') && S(cur()).f1.sel.size === 1) { e.stopImmediatePropagation(); r.ondblclick(); } }, true);
+    });
+    const hint = v.querySelector('.fpane > p.muted'); if (hint && !hint.dataset.mob) hint.dataset.mob = '1', hint.textContent = 'Tap to select · tap again to open or edit · Upload picks from Photos/Files';
   }
 
   function decorate() {
     const m = document.getElementById('main');
-    const head = m.querySelector(':scope > .row');
+    const head = m.querySelector('.pane > .row') || m.querySelector(':scope > .row');
     if (head && !head.querySelector('.burger')) head.prepend(burger());
     if (!m.querySelector('.burger')) { const e = m.querySelector('.empty > div'); if (e) e.prepend(burger()); }
     const v = document.getElementById('view'); if (!v) return;

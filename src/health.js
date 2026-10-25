@@ -164,11 +164,11 @@ function vHealth(s, u, v) {
   const run = async () => { u.healthBusy = true; draw();
     try { const r = await uc.call('exec', s.id, HEALTH_SCRIPT, 150000); u.health = { ...parseHealth(r.out || ''), at: Date.now() }; }
     catch (e) { toast('Health check failed: ' + e.message, true); }
-    u.healthBusy = false; if (cur === s.id && u.tab === 'health') draw(); };
+    u.healthBusy = false; if (anyPane(s.id, 'health')) draw(); };
   const refreshLists = async () => {
-    if (!confirm('Refresh the package lists on this server?\n\nThis runs apt-get update (or dnf/yum makecache, apk update) with sudo -n, so it only works as root or with passwordless sudo. Nothing is installed or upgraded.')) return;
+    if (!confirm(`Refresh the package lists on this server?\n\nThis runs apt-get update (or dnf/yum makecache, apk update) as root${s.has_sudoPassword ? ' using your saved sudo password' : ' with sudo -n, so it only works as root or with passwordless sudo'}. Nothing is installed or upgraded.`)) return;
     u.healthBusy = true; draw();
-    try { const r = await uc.call('exec', s.id, HEALTH_REFRESH, 180000);
+    try { const r = s.has_sudoPassword ? await uc.call('sudo:exec', s.id, HEALTH_REFRESH) : await uc.call('exec', s.id, HEALTH_REFRESH, 180000);
       if (r.code) toast('Couldn\'t refresh: ' + ((r.err || r.out || '').trim().split('\n').pop() || 'needs root or passwordless sudo'), true); else toast('Package lists refreshed'); }
     catch (e) { toast(e.message, true); }
     u.healthBusy = false; run(); };

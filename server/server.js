@@ -2,11 +2,20 @@
 // Uiable Connect for Docker: serves the same UI (../src) as a web app and implements the window.uc channels over
 // HTTP (POST /api/call, /api/send) + Server-Sent Events (/api/events), backed by lib/core.js (ssh2). No extra deps.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), os = require('os');
-const { Session, testConnection } = require('../lib/core');
+const { makeSession, testConnection, sudoExec } = require('../lib/core');
 const { Store } = require('../lib/store');
+const { History } = require('../lib/history');
 const VERSION = require('../package.json').version;
 const DATA = process.env.UC_DATA || '/data', PORT = Number(process.env.PORT || 8484), BIND = process.env.UC_BIND || '0.0.0.0';
 const FWD_BIND = process.env.UC_FWD_BIND || '0.0.0.0'; // forwards listen inside the container; publish the ports in compose
+// A container can't open arbitrary ports on the PC: each forward's PC-side port must be published
+// at `docker run` / compose time. UC_FWD_PORTS tells the app which PC ports are published so it can
+// warn before you pick one Docker can't deliver. Default matches docker-compose.yml (8080-8090).
+const FWD_PORTS = new Set();
+for (const part of (process.env.UC_FWD_PORTS || '8080-8090').split(',')) {
+  const m = part.trim().match(/^(\d+)(?:-(\d+))?$/); if (!m) continue;
+  for (let p = +m[1]; p <= +(m[2] || m[1]); p++) FWD_PORTS.add(p);
+}
 const PASSWORD = process.env.UC_PASSWORD || '';
 const ALLOWED = (process.env.UC_ALLOWED_HOSTS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 fs.mkdirSync(DATA, { recursive: true });
@@ -21,47 +30,64 @@ const enc = s => { const iv = crypto.randomBytes(12), c = crypto.createCipheriv(
 const dec = s => { if (!s.startsWith('g:')) throw new Error('Unknown secret format'); const b = Buffer.from(s.slice(2), 'base64');
   const d = crypto.createDecipheriv('aes-256-gcm', KEY, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); };
 const store = new Store(path.join(DATA, 'servers.json'), enc, dec);
+const hist = new History(path.join(DATA, 'logs'));
+const log = (id, ev, detail) => { if (store.setting('history', true)) { const s = store.list().find(x => x.id === id); hist.add(id, s ? s.name || s.host : '', ev, detail); } };
 
 // ---- sessions + events
 const sessions = new Map(), clients = new Set();
 const emit = d => { const line = `data: ${JSON.stringify(d)}\n\n`; for (const r of clients) r.write(line); };
 const S = id => { const s = sessions.get(id); if (!s || s.closed) throw new Error('Not connected'); return s; };
+const checkFwdPort = f => { const p = Number(f.localPort);
+  if (!FWD_PORTS.has(p)) throw new Error(`Port ${p} isn't published by the container. Add -p ${p}:${p} (or the matching ports: line in compose) and set UC_FWD_PORTS to include it.`); };
 const latestUiable = async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
   if (!r.ok) return null; const j = await r.json(); const a = (j.assets || []).find(x => x.name === 'uiable.zip');
   return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; };
+const fwdStatuses = (s, sess) => sess.forwardStatus ? (s.forwards || []).map(f => sess.forwardStatus(f.id)) : [];
 const H = {
-  'servers:list': () => store.list().map(s => ({ ...s, connected: sessions.has(s.id) && !sessions.get(s.id).closed, fwdStatus: sessions.has(s.id) ? (s.forwards || []).map(f => sessions.get(s.id).forwardStatus(f.id)) : [] })),
-  'servers:save': s => store.upsert(s),
-  'servers:delete': id => { if (sessions.has(id)) sessions.get(id).end(); sessions.delete(id); store.remove(id); },
+  'servers:list': () => store.list().map(s => ({ ...s, connected: sessions.has(s.id) && !sessions.get(s.id).closed, fwdStatus: sessions.has(s.id) ? fwdStatuses(s, sessions.get(s.id)) : [] })),
+  'servers:save': s => { const id = store.upsert(s); log(id, 'server-saved', `${s.username ? s.username + '@' : ''}${s.host || s.serialPath || ''}`); return id; },
+  'servers:delete': id => { if (sessions.has(id)) sessions.get(id).end(); sessions.delete(id); log(id, 'server-deleted'); store.remove(id); },
   'servers:forwards': (id, fw) => store.setForwards(id, fw),
   'servers:hostkey': (id, fp) => store.setHostKey(id, fp),
   'servers:alerts': (id, r) => store.setAlerts(id, r),
-  'servers:test': s => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase']) if (!full[k]) full[k] = saved[k]; } return testConnection(full); },
+  'servers:test': s => { const full = { ...s }; if (s.id) { const saved = store.full(s.id); for (const k of ['password', 'privateKey', 'passphrase', 'sudoPassword']) if (!full[k]) full[k] = saved[k]; } return testConnection(full); },
   'snippets:list': () => store.snippets(), 'snippets:save': l => store.setSnippets(l),
-  'backup:export': () => store.exportAll(),
-  'backup:import': (d, mode) => { if (mode === 'replace') { for (const s of sessions.values()) s.end(); sessions.clear(); } return store.importAll(d, mode); },
+  'backup:export': () => { log(null, 'backup-export'); return store.exportAll(); },
+  'backup:import': (d, mode) => { if (mode === 'replace') { for (const s of sessions.values()) s.end(); sessions.clear(); } const n = store.importAll(d, mode); log(null, 'backup-import', `${n} server(s), ${mode}`); return n; },
+  'serial:list': () => { throw new Error('Serial ports are not reachable from inside Docker'); },
   'conn:connect': async id => { if (sessions.has(id) && !sessions.get(id).closed) return true; const srv = store.full(id);
-    const s = new Session(srv, (ev, d) => emit({ id, ev, ...d })); await s.connect(); sessions.set(id, s);
-    for (const f of srv.forwards || []) if (f.auto) s.startForward({ ...f, bind: FWD_BIND }).catch(e => emit({ id, ev: 'toast', message: e.message }));
+    const s = makeSession(srv, (ev, d) => { if (ev === 'closed') log(id, 'connection-lost'); emit({ id, ev, ...d }); }); await s.connect(); sessions.set(id, s);
+    log(id, 'connected', srv.connType === 'serial' ? `${srv.serialPath}` : `${srv.username || ''}@${srv.host}:${srv.port}`);
+    if (s.startForward) for (const f of srv.forwards || []) if (f.auto) { try { checkFwdPort(f); s.startForward({ ...f, bind: FWD_BIND }).catch(e => emit({ id, ev: 'toast', message: e.message })); } catch (e) { emit({ id, ev: 'toast', message: e.message }); } }
     return true; },
-  'conn:disconnect': id => { const s = sessions.get(id); if (s) s.end(); sessions.delete(id); },
-  'fwd:start': (id, f) => S(id).startForward({ ...f, bind: FWD_BIND }),
-  'fwd:stop': (id, fid) => S(id).stopForward(fid),
-  'fwd:check': port => new Session({}).checkLocalPort(Number(port), FWD_BIND),
+  'conn:disconnect': id => { const s = sessions.get(id); if (s) { s.end(); log(id, 'disconnected'); } sessions.delete(id); },
+  'fwd:start': (id, f) => { checkFwdPort(f); log(id, 'forward-start', `${f.name || f.id} :${f.localPort} -> ${f.remoteHost}:${f.remotePort}`); return S(id).startForward({ ...f, bind: FWD_BIND }); },
+  'fwd:stop': (id, fid) => { log(id, 'forward-stop', fid); return S(id).stopForward(fid); },
+  'fwd:check': port => makeSession({}).checkLocalPort(Number(port), FWD_BIND),
   'stats': id => S(id).stats(),
-  'exec': (id, cmd, t) => S(id).exec(String(cmd), { timeout: Math.min(Number(t) || 20000, 180000) }),
-  'uiable:detect': (id, port) => S(id).detectUiable(port || 8080),
+  'exec': (id, cmd, t) => { log(id, 'exec', cmd); return S(id).exec(String(cmd), { timeout: Math.min(Number(t) || 20000, 180000) }); },
+  'sudo:exec': (id, cmd, pw) => { log(id, 'exec-sudo', cmd); const srv = store.full(id); return sudoExec(S(id), String(cmd), pw || srv.sudoPassword || null, { timeout: 180000 }); },
+  'uiable:detect': (id, port) => S(id).detectUiable ? S(id).detectUiable(port) : { reachable: false },
   'uiable:latest': latestUiable,
-  'uiable:open': async id => { const srv = store.list().find(x => x.id === id);
-    const f = (srv.forwards || []).find(x => x.id === 'uiable') || { id: 'uiable', localPort: 8080, remoteHost: '127.0.0.1', remotePort: 8080 };
-    await S(id).startForward({ ...f, bind: FWD_BIND }); return { port: f.localPort }; },
+  'uiable:open': async (id, _mode, port) => { const srv = store.list().find(x => x.id === id);
+    const saved = (srv.forwards || []).find(x => x.id === 'uiable') || {};
+    const f = { id: 'uiable', localPort: saved.localPort || 8080, remoteHost: '127.0.0.1', remotePort: Number(port) || saved.remotePort || 8080 };
+    checkFwdPort(f); await S(id).startForward({ ...f, bind: FWD_BIND }); return { port: f.localPort }; },
   'app:update': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null; const j = await r.json(); return { current: VERSION, latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url }; },
+  'app:selfupdate': () => ({ docker: true }), // update = pull the new image; the UI shows the commands
   'app:version': () => VERSION,
-  'shell:open': (id, sid, c, r) => S(id).openShell(sid, c, r),
+  'app:info': () => ({ platform: 'web', os: 'docker', fwdPorts: [...FWD_PORTS].sort((a, b) => a - b) }),
+  'history:list': n => hist.list(Math.min(Number(n) || 300, 2000)),
+  'history:clear': () => hist.clear(),
+  'history:get': () => store.setting('history', true),
+  'history:set': v => store.setSetting('history', !!v),
+  'shell:open': (id, sid, c, r) => { log(id, 'shell'); return S(id).openShell(sid, c, r); },
   'fs:home': id => S(id).home(), 'fs:list': (id, p) => S(id).list(p), 'fs:mkdir': (id, p) => S(id).mkdir(p),
-  'fs:rename': (id, a, b) => S(id).rename(a, b), 'fs:remove': (id, p) => S(id).remove(p),
+  'fs:rename': (id, a, b) => S(id).rename(a, b), 'fs:remove': (id, p) => { log(id, 'remove', p); return S(id).remove(p); },
   'fs:read': (id, p) => S(id).readText(p), 'fs:write': (id, p, t) => S(id).writeText(p, t),
+  'fs:copy': async (id, src, toId, dstDir) => { if (toId === id) { const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
+    log(id, 'copy', `${src} -> ${toId}:${dstDir}`); return S(id).copyTo(S(toId), String(src), String(dstDir), pr => emit({ id, ev: 'progress', ...pr })); },
 };
 const SEND = { 'shell:write': (id, sid, d) => sessions.get(id)?.shellWrite(sid, d), 'shell:resize': (id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r), 'shell:close': (id, sid) => sessions.get(id)?.shellClose(sid) };
 
@@ -113,8 +139,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/upload' && req.method === 'POST') { const id = u.searchParams.get('id'), dest = u.searchParams.get('path'); const sftp = await S(id).sftp();
       const tot = Number(req.headers['content-length']) || 0; let t = 0, last = 0; const name = dest.split('/').pop();
       await new Promise((ok, no) => { const w = sftp.createWriteStream(dest); w.on('error', no); w.on('close', ok); req.on('data', c => { t += c.length; if (Date.now() - last > 300) { last = Date.now(); emit({ id, ev: 'progress', name, t, tot }); } }); req.pipe(w); });
-      return json(res, 200, { ok: true, data: true }); }
+      log(id, 'upload', dest); return json(res, 200, { ok: true, data: true }); }
     if (p === '/api/download') { const id = u.searchParams.get('id'), rp = u.searchParams.get('path'); const s = S(id); const name = path.posix.basename(rp) || 'download';
+      log(id, 'download', rp);
       if (await s.isDir(rp)) { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ucd-')); try { await s.download(rp, tmp);
           res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${encodeURIComponent(name)}.tar.gz"` });
           const t = require('child_process').spawn('tar', ['-C', tmp, '-czf', '-', name]); t.stdout.pipe(res); await new Promise(r => t.on('close', r)); } finally { fs.rmSync(tmp, { recursive: true, force: true }); } return; }

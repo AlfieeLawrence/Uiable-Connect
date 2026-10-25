@@ -32,7 +32,7 @@ function evalAlerts(s, x, now = Date.now()) {
     const m = metricValue(r, x); const k = st[r.id] ||= { since: null, last: 0 };
     if (!m || !(m.v > Number(r.threshold))) { k.since = null; continue; }
     k.since ??= now;
-    if (now - k.since >= (Number(r.forSec) || 0) * 1000 && now - k.last >= (Number(r.cooldownMin) || 0) * 60000) {
+    if (now - k.since >= (Number(r.forSec) || 0) * 1000 && (!k.last || now - k.last >= (Number(r.cooldownMin) || 0) * 60000)) {
       k.last = now; const meta = ALERT_METRICS[r.metric];
       const val = r.metric === 'load' ? m.v.toFixed(2) : Math.round(m.v) + '%';
       out.push(`${meta.label} is ${val}${m.where ? ' on ' + m.where : ''} (above ${r.threshold}${meta.unit}${Number(r.forSec) ? ' for ' + r.forSec + 's' : ''})`);

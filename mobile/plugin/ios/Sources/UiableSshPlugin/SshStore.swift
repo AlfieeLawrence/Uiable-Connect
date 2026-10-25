@@ -68,21 +68,31 @@ final class SshStore: @unchecked Sendable {
         throw SshError(message: "Could not read the private key (wrong passphrase, or not an ed25519/RSA OpenSSH key)")
     }
     private static func open(_ a: SshAuth) async throws -> SSHClient {
-        let m = try method(a)
-        let tofu = TofuValidator(a.hostKey ?? "")
-        let isRsa = (a.privateKey ?? "").isEmpty == false && (try? Curve25519.Signing.PrivateKey(sshEd25519: a.privateKey!, decryptionKey: (a.passphrase?.isEmpty == false) ? Data(a.passphrase!.utf8) : nil)) == nil
-        do {
-            return try await SSHClient.connect(host: a.host, port: a.port, authenticationMethod: m,
-                                    hostKeyValidator: .custom(tofu), // trust on first use, checked before auth
-                                    reconnect: .never, connectTimeout: .seconds(15))
-        } catch {
-            if let seen = tofu.seen, seen != (a.hostKey ?? "") { throw SshError(message: ((a.hostKey ?? "").isEmpty ? "HOSTKEY_UNKNOWN " : "HOSTKEY_CHANGED ") + seen) }
-            // Citadel signs RSA with legacy ssh-rsa (SHA-1), which OpenSSH 8.8+ refuses by default.
-            if isRsa && describe(error).contains("authentication") {
-                throw SshError(message: "The server refused this RSA key. On iPhone/iPad use an ed25519 key (ssh-keygen -t ed25519) or a password")
-            }
-            throw error
+        // key + password saved: try the key first, fall back to the password on auth failure
+        var methods = [try method(a)]
+        if let key = a.privateKey, !key.isEmpty, let pw = a.password, !pw.isEmpty {
+            methods.append(.passwordBased(username: a.username, password: pw))
         }
+        var lastError: Error?
+        for m in methods {
+            let tofu = TofuValidator(a.hostKey ?? "")
+            let isRsa = (a.privateKey ?? "").isEmpty == false && (try? Curve25519.Signing.PrivateKey(sshEd25519: a.privateKey!, decryptionKey: (a.passphrase?.isEmpty == false) ? Data(a.passphrase!.utf8) : nil)) == nil
+            do {
+                return try await SSHClient.connect(host: a.host, port: a.port, authenticationMethod: m,
+                                        hostKeyValidator: .custom(tofu), // trust on first use, checked before auth
+                                        reconnect: .never, connectTimeout: .seconds(15))
+            } catch {
+                if let seen = tofu.seen, seen != (a.hostKey ?? "") { throw SshError(message: ((a.hostKey ?? "").isEmpty ? "HOSTKEY_UNKNOWN " : "HOSTKEY_CHANGED ") + seen) }
+                lastError = error
+                if methods.count > 1 && describe(error).contains("authentication") { continue } // try the next method
+                // Citadel signs RSA with legacy ssh-rsa (SHA-1), which OpenSSH 8.8+ refuses by default.
+                if isRsa && describe(error).contains("authentication") {
+                    throw SshError(message: "The server refused this RSA key. On iPhone/iPad use an ed25519 key (ssh-keygen -t ed25519) or a password")
+                }
+                throw error
+            }
+        }
+        throw lastError ?? SshError(message: "Could not connect")
     }
 
     func test(_ a: SshAuth) async throws -> String {

@@ -64,3 +64,22 @@ table.list input { padding: 5px 8px; }
 .slist { display: flex; flex-direction: column; gap: 6px; }
 .snip { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--input); flex-wrap: wrap; }
 .side-foot { display: flex; gap: 6px; } .side-foot > :first-child { flex: 1; }
+
+/* ---------- split view panes (v1.3) */
+#panes { display: flex; flex: 1; min-height: 0; min-width: 0; gap: 14px; }
+.pane { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; border-radius: var(--radius); }
+#panes.split .pane { border: 1px solid var(--border); padding: 12px 14px; background: rgba(10,12,20,.3); overflow: hidden; }
+#panes.split .pane.focus { border-color: rgba(124,92,255,.45); }
+.pane > .row { flex-shrink: 0; }
+.pane .view { flex: 1; min-height: 0; overflow: auto; }
+.pane h2 { font-size: 18px; margin: 0; }
+/* ---------- files: two panes, drag between servers */
+.fcols { display: flex; gap: 14px; flex: 1; min-height: 0; }
+.fpane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.fcols.two .fpane { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; background: var(--input); }
+.fpane .flist { flex: 1; min-height: 160px; overflow: auto; }
+.fpane tr[draggable="true"] { cursor: grab; }
+/* ---------- history */
+tr.hcur td { background: rgba(124,92,255,.07); }
+.pill.small { font-size: 11px; padding: 2px 8px; }
+@media (max-width: 760px) { #panes.split { flex-direction: column; } .fcols.two { flex-direction: column; } }

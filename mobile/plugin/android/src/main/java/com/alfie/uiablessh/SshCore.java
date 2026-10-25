@@ -39,7 +39,8 @@ public class SshCore {
         if (a.password != null && !a.password.isEmpty()) s.setPassword(a.password);
         Properties c = new Properties();
         c.put("StrictHostKeyChecking", "yes"); // checked by Tofu below against the saved fingerprint, before auth
-        c.put("PreferredAuthentications", a.privateKey != null && !a.privateKey.isEmpty() ? "publickey" : "password,keyboard-interactive");
+        boolean hasKey = a.privateKey != null && !a.privateKey.isEmpty(), hasPw = a.password != null && !a.password.isEmpty();
+        c.put("PreferredAuthentications", hasKey && hasPw ? "publickey,password,keyboard-interactive" : hasKey ? "publickey" : "password,keyboard-interactive");
         s.setConfig(c);
         if (a.password != null) { final String pw = a.password; s.setUserInfo(new PwInfo(pw)); }
         s.setServerAliveInterval(20000); s.setServerAliveCountMax(3);

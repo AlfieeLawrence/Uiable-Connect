@@ -18,7 +18,7 @@
 
   // ---------- store (one JSON blob, kept encrypted by the OS keystore)
   const DEFAULT_FWD = () => ({ id: 'uiable', name: 'Uiable dashboard', localPort: 8080, remoteHost: '127.0.0.1', remotePort: 8080, builtin: true, auto: false });
-  const SECRET = ['password', 'privateKey', 'passphrase'];
+  const SECRET = ['password', 'privateKey', 'passphrase', 'sudoPassword'];
   let data = null;
   async function load() {
     if (data) return data;
@@ -34,9 +34,16 @@
   const sessions = new Map(); // id -> { forwards: Map(fid -> status), prev }
   const S = id => { const s = sessions.get(id); if (!s) throw new Error('Not connected'); return s; };
   const auth = s => ({ host: s.host, port: Number(s.port) || 22, username: s.username, hostKey: s.hostKey || '',
-    ...(s.auth === 'key' ? { privateKey: s.privateKey || '', passphrase: s.passphrase || '' } : { password: s.password || '' }) });
+    ...(s.auth === 'key' ? { privateKey: s.privateKey || '', passphrase: s.passphrase || '' }
+      : s.auth === 'keypass' ? { privateKey: s.privateKey || '', passphrase: s.passphrase || '', password: s.password || '' }
+      : { password: s.password || '' }) });
   const sh = p => "'" + String(p).replace(/'/g, `'\\''`) + "'";
   const exec = (id, cmd, timeout = 20000) => Ssh.exec({ id, cmd, timeout });
+  // audit log: events only, never keystrokes/file contents/secrets
+  const hlog = async (id, ev, d) => { await load(); if ((data.settings || {}).history === false) return;
+    const s = data.servers.find(x => x.id === id);
+    (data.history ||= []).push({ t: Date.now(), s: id || null, n: s ? s.name || s.host : '', ev, d: String(d ?? '').slice(0, 500) });
+    if (data.history.length > 500) data.history = data.history.slice(-500); await save(); };
 
   if (Ssh && Ssh.addListener) {
     Ssh.addListener('shellData', d => emit({ id: d.id, ev: 'shell-data', sid: d.sid, data: d.data }));
@@ -61,7 +68,10 @@
   }
   const fwdStatus = (id, fid) => { const s = sessions.get(id); const f = s && s.forwards.get(fid); return f ? { id: fid, active: true, conns: 0, error: null } : { id: fid, active: false }; };
   async function startForward(id, f) {
-    const s = S(id); if (s.forwards.has(f.id)) return fwdStatus(id, f.id);
+    const s = S(id); // same id but different definition -> restart so nothing stays stale
+    const ex = s.forwards.get(f.id);
+    if (ex) { if (+ex.remotePort === +f.remotePort && (ex.remoteHost || '127.0.0.1') === (f.remoteHost || '127.0.0.1') && +ex.localPort === +f.localPort) return fwdStatus(id, f.id);
+      s.forwards.delete(f.id); await Ssh.forwardStop({ id, fid: f.id }).catch(() => {}); }
     try { await Ssh.forwardStart({ id, fid: f.id, localPort: Number(f.localPort), remoteHost: f.remoteHost || '127.0.0.1', remotePort: Number(f.remotePort) }); }
     catch (e) { throw new Error(/in use|EADDRINUSE|bind/i.test(e.message) ? `Local port ${f.localPort} is already in use on this device` : e.message); }
     s.forwards.set(f.id, f); return fwdStatus(id, f.id);
@@ -74,16 +84,17 @@
     'servers:list': async () => { await load(); return data.servers.map(s => ({ ...pub(s), connected: sessions.has(s.id), fwdStatus: sessions.has(s.id) ? (s.forwards || []).map(f => fwdStatus(s.id, f.id)) : [] })); },
     'servers:save': async inp => { await load(); let s = data.servers.find(x => x.id === inp.id);
       if (!s) { s = { id: uuid(), forwards: [DEFAULT_FWD()] }; data.servers.push(s); }
-      for (const k of ['name', 'host', 'port', 'username', 'auth', 'keyName', 'color', 'hostKey']) if (k in inp) s[k] = inp[k];
-      s.port = Number(s.port) || 22;
+      for (const k of ['name', 'host', 'port', 'username', 'auth', 'keyName', 'color', 'hostKey', 'connType', 'serialPath', 'baudRate']) if (k in inp) s[k] = inp[k];
+      s.port = Number(s.port) || (s.connType === 'telnet' ? 23 : 22);
       for (const k of SECRET) { if (inp[k] === null) delete s[k]; else if (typeof inp[k] === 'string' && inp[k] !== '') s[k] = inp[k]; }
-      if (s.auth === 'password') { delete s.privateKey; delete s.passphrase; delete s.keyName; } else delete s.password;
+      if (s.auth === 'password') { delete s.privateKey; delete s.passphrase; delete s.keyName; }
+      if (s.auth === 'key') delete s.password;
       await save(); return s.id; },
     'servers:delete': async id => { await load(); if (sessions.has(id)) await H['conn:disconnect'](id); data.servers = data.servers.filter(s => s.id !== id); await save(); },
     'servers:forwards': async (id, fw) => { await load(); const s = data.servers.find(x => x.id === id); s.forwards = fw.map(f => ({ ...f, localPort: Number(f.localPort), remotePort: Number(f.remotePort) })); await save(); },
     'servers:hostkey': async (id, fp) => { await load(); const s = data.servers.find(x => x.id === id); if (!s) throw new Error('Server not found'); s.hostKey = String(fp); await save(); },
     'snippets:list': async () => { await load(); return data.snippets || []; },
-    'snippets:save': async l => { await load(); data.snippets = (l || []).map(x => ({ id: String(x.id), name: String(x.name || ''), cmd: String(x.cmd || ''), serverId: x.serverId || null })); await save(); },
+    'snippets:save': async l => { await load(); data.snippets = (l || []).map(x => ({ id: String(x.id), name: String(x.name || ''), cmd: String(x.cmd || ''), serverId: x.serverId || null, sudo: !!x.sudo })); await save(); },
     'backup:export': async () => { await load(); return { servers: data.servers.map(s => ({ ...s })), snippets: data.snippets || [] }; },
     'backup:import': async (d, mode) => { await load(); const conv = s => { const o = { ...s }; for (const k of Object.keys(o)) if (k.startsWith('has_') || k === 'connected' || k === 'fwdStatus') delete o[k];
         o.id = String(o.id || uuid()); o.port = Number(o.port) || 22; o.forwards = Array.isArray(o.forwards) ? o.forwards : []; return o; };
@@ -98,7 +109,7 @@
       await P.Share.share({ title: 'Save backup', files: [uri] }); return name; },
     'servers:alerts': async (id, rules) => { await load(); const s = data.servers.find(x => x.id === id); if (!s) throw new Error('Server not found');
       s.alerts = rules.map(r => ({ ...r, threshold: Number(r.threshold) || 0, forSec: Number(r.forSec) || 0, cooldownMin: Number(r.cooldownMin) || 0, enabled: !!r.enabled })); await save(); },
-    'exec': (id, cmd, timeout) => { S(id); return exec(id, String(cmd), Math.min(Number(timeout) || 20000, 180000)); },
+    'exec': (id, cmd, timeout) => { S(id); hlog(id, 'exec', cmd); return exec(id, String(cmd), Math.min(Number(timeout) || 20000, 180000)); },
     // alerts -> @capacitor/local-notifications (shows while the app is open/backgrounded; the app does not poll when it's closed)
     'notify:permission': async () => { const LN = P.LocalNotifications; if (!LN) return false; const r = await LN.requestPermissions(); return r.display === 'granted'; },
     'notify': async ({ title, body }) => { const LN = P.LocalNotifications; if (!LN) return false;
@@ -109,20 +120,39 @@
     'key:pick': () => new Promise(res => { const i = document.createElement('input'); i.type = 'file';
       i.onchange = () => { const f = i.files[0]; if (!f) return res(null); const r = new FileReader(); r.onload = () => res({ name: f.name, text: r.result }); r.readAsText(f); }; i.click(); }),
     'conn:connect': async id => { await load(); if (sessions.has(id)) return true; const srv = full(id);
+      if (srv.connType && srv.connType !== 'ssh') throw new Error(`${srv.connType} connections aren't supported on phones/tablets`);
       await Ssh.connect({ id, ...auth(srv) }); sessions.set(id, { forwards: new Map(), prev: null });
+      await hlog(id, 'connected', `${srv.username || ''}@${srv.host}:${srv.port}`);
       for (const f of srv.forwards || []) if (f.auto) startForward(id, f).catch(e => emit({ id, ev: 'toast', message: e.message }));
       return true; },
-    'conn:disconnect': async id => { sessions.delete(id); await Ssh.disconnect({ id }).catch(() => {}); },
-    'fwd:start': (id, f) => startForward(id, f),
-    'fwd:stop': async (id, fid) => { const s = sessions.get(id); if (s) { s.forwards.delete(fid); await Ssh.forwardStop({ id, fid }).catch(() => {}); } return { id: fid, active: false }; },
+    'conn:disconnect': async id => { sessions.delete(id); await hlog(id, 'disconnected'); await Ssh.disconnect({ id }).catch(() => {}); },
+    'fwd:start': (id, f) => { hlog(id, 'forward-start', `${f.name || f.id} :${f.localPort} -> ${f.remoteHost}:${f.remotePort}`); return startForward(id, f); },
+    'fwd:stop': async (id, fid) => { const s = sessions.get(id); if (s) { s.forwards.delete(fid); hlog(id, 'forward-stop', fid); await Ssh.forwardStop({ id, fid }).catch(() => {}); } return { id: fid, active: false }; },
     'fwd:check': port => Ssh.portFree({ port: Number(port) }),
     'stats': async id => { const s = S(id); const r = await exec(id, STATS_CMD, 10000); const x = parseStats(r.out, s.prev); s.prev = x.raw; delete x.raw; return x; },
-    'uiable:detect': async (id, port = 8080) => {
-      const r = await exec(id, `(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:${port}/ 2>/dev/null || wget -q -T 3 -O /dev/null -S http://127.0.0.1:${port}/ 2>&1 | awk '/HTTP\\//{print $2}' | tail -1); echo; (curl -s -m 3 http://127.0.0.1:${port}/ 2>/dev/null || wget -q -T 3 -O - http://127.0.0.1:${port}/ 2>/dev/null) | grep -io '<title>[^<]*' | head -1`).catch(() => ({ out: '' }));
-      const [code, title] = r.out.trim().split('\n'); const up = /^[23]\d\d$/.test((code || '').trim());
-      return { reachable: up, isUiable: up && /uiable/i.test(title || ''), title: (title || '').replace(/<title>/i, ''), port }; },
-    'uiable:open': async (id, mode) => { await load(); const srv = data.servers.find(x => x.id === id);
-      const f = (srv.forwards || []).find(x => x.id === 'uiable') || DEFAULT_FWD();
+    // Uiable is identified by /api/state on every listening port (+ the port in /opt/uiable/.env),
+    // not just "something on 8080" — same probe as lib/core.js detectUiable
+    'uiable:detect': async (id, port) => {
+      const extra = Number(port) > 0 ? Number(port) : '';
+      const r = await exec(id, `
+EP=$(sed -n 's/^UIABLE_PORT=//p' /opt/uiable/.env 2>/dev/null | tail -1)
+PS="$EP 8080 ${extra}"
+if command -v ss >/dev/null 2>&1; then L=$(ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -un)
+elif command -v netstat >/dev/null 2>&1; then L=$(netstat -tln 2>/dev/null | awk 'NR>2{print $4}' | sed 's/.*://' | sort -un); fi
+for P in $PS $L; do echo "$P"; done | sort -un | head -20 | while read -r P; do
+  O=$( (curl -fs -m 3 "http://127.0.0.1:$P/api/state" 2>/dev/null || wget -qO- -T 3 "http://127.0.0.1:$P/api/state" 2>/dev/null) | head -c 1500 | tr '\\n' ' ')
+  [ -n "$O" ] && echo "@@$P $O"
+done`, 30000).catch(() => ({ out: '' }));
+      let found = null;
+      for (const l of (r.out || '').split('\n')) {
+        const m = l.match(/^@@(\d+)\s+(\{.*)/); if (!m || found) continue;
+        if (!/"version"\s*:/.test(m[2]) && !/uiable/i.test(m[2])) continue;
+        const v = m[2].match(/"version"\s*:\s*"([^"]+)"/); found = { port: Number(m[1]), version: v ? v[1] : null };
+      }
+      return { reachable: !!found, isUiable: !!found, version: found && found.version, port: found ? found.port : (extra || 8080) }; },
+    'uiable:open': async (id, mode, port) => { await load(); const srv = data.servers.find(x => x.id === id);
+      const saved = (srv.forwards || []).find(x => x.id === 'uiable') || {};
+      const f = { id: 'uiable', localPort: saved.localPort || 8080, remoteHost: '127.0.0.1', remotePort: Number(port) || saved.remotePort || 8080 };
       await startForward(id, f); const url = `http://127.0.0.1:${f.localPort}/`;
       if (native && P.Browser) await P.Browser.open({ url, presentationStyle: 'fullscreen', toolbarColor: '#0b0d14' }); else window.open(url);
       return url; },
@@ -132,6 +162,39 @@
       if (!r.ok) return null; const j = await r.json(); const a = (j.assets || []).find(x => x.name === 'uiable.zip');
       return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; },
     'app:version': async () => window.UC_VERSION || '0.0.0',
+    'app:info': async () => ({ platform: 'mobile', os: native ? Cap.getPlatform() : 'web' }),
+    'app:selfupdate': async () => { const url = 'https://github.com/AlfieeLawrence/uiable-connect/releases/latest'; if (native && P.Browser) await P.Browser.open({ url }); else window.open(url); return { opened: true }; },
+    'serial:list': async () => { throw new Error('Serial connections are not supported on phones/tablets'); },
+    // sudo: the password file is opened by the shell then deleted; sudo reads it from the still-open fd.
+    // With a saved password this never touches the JS side.
+    'sudo:exec': async (id, cmd, pw) => { await load(); const srv = full(id); const usePw = pw || srv.sudoPassword;
+      if (!usePw) return exec(id, `sudo -n sh -c ${sh(cmd)}`, 180000);
+      const home = (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '~' }))).path;
+      const dir = home + '/.uiable-connect', pf = dir + '/.p';
+      try { await exec(id, `mkdir -p -m 700 ${sh(dir)}`, 15000);
+        await Ssh.sftpWrite({ id, path: pf, data: bytesToB64(new TextEncoder().encode(usePw + '\n')), append: false });
+        const r = await exec(id, `exec 3< ${sh(pf)}; rm -f ${sh(pf)}; sudo -S -p '' sh -c ${sh(cmd)} <&3`, 180000);
+        if (r.code && /incorrect|try again|Sorry/i.test(r.err || '')) throw new Error('Wrong sudo password');
+        return r; }
+      finally { exec(id, `rm -f ${sh(pf)}`, 10000).catch(() => {}); } },
+    // server -> server copy, relayed through the app in 512 KB chunks (never on disk)
+    'fs:copy': async (id, src, toId, dstDir) => { S(toId); await load();
+      if (toId === id) { const r = await exec(id, `cp -r -- ${sh(src)} ${sh(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
+      const st = await Ssh.sftpStat({ id, path: src }); const name = src.replace(/\/+$/, '').split('/').pop();
+      const dest = (dstDir.endsWith('/') ? dstDir : dstDir + '/') + name;
+      if (st.dir) { await Ssh.sftpMkdir({ id: toId, path: dest }).catch(() => {});
+        const { items } = await Ssh.sftpList({ id, path: src });
+        for (const i of items) await H['fs:copy'](id, src.replace(/\/+$/, '') + '/' + i.name, toId, dest); return dest; }
+      await Ssh.sftpWrite({ id: toId, path: dest, data: '', append: false });
+      let off = 0; do { const r = await Ssh.sftpRead({ id, path: src, offset: off, length: CHUNK });
+        if (r.data) await Ssh.sftpWrite({ id: toId, path: dest, data: r.data, append: off > 0 });
+        off += r.bytes; emit({ id, ev: 'progress', name, t: off, tot: st.size }); if (!r.bytes) break; } while (off < st.size);
+      return dest; },
+    // audit log: events only, never keystrokes/file contents/secrets
+    'history:list': async n => { await load(); return (data.history || []).slice(-Math.min(Number(n) || 300, 2000)).reverse(); },
+    'history:clear': async () => { await load(); data.history = []; await save(); },
+    'history:get': async () => { await load(); return (data.settings || {}).history !== false; },
+    'history:set': async v => { await load(); (data.settings ||= {}).history = !!v; await save(); },
     'app:open': async url => { if (!/^https:\/\/github\.com\//.test(url)) return; if (native && P.Browser) await P.Browser.open({ url }); else window.open(url); },
     'shell:open': async (id, sid, cols, rows) => { S(id); await Ssh.shellOpen({ id, sid, cols, rows }); return sid; },
     'fs:home': async id => (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '/' }))).path,
