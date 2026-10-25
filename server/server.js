@@ -13,7 +13,7 @@ const FWD_BIND = process.env.UC_FWD_BIND || '0.0.0.0'; // forwards listen inside
 // at `docker run` / compose time. UC_FWD_PORTS tells the app which PC ports are published so it can
 // warn before you pick one Docker can't deliver. Default matches docker-compose.yml (8080-8090).
 const FWD_PORTS = new Set();
-for (const part of (process.env.UC_FWD_PORTS || '8080-8090').split(',')) {
+for (const part of (process.env.UC_FWD_PORTS || '8000-8099').split(',')) {
   const m = part.trim().match(/^(\d+)(?:-(\d+))?$/); if (!m) continue;
   for (let p = +m[1]; p <= +(m[2] || m[1]); p++) FWD_PORTS.add(p);
 }

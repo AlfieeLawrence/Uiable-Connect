@@ -8,15 +8,16 @@ services:
     ports:
       - "127.0.0.1:8484:8484"        # the web UI, only on this computer
       # Port forwards (tunnels) listen inside the container. Docker can't open new PC ports at
-      # runtime — each forward's PC port must be published here, e.g. a range like below.
-      # Tell the app which ports you published via UC_FWD_PORTS so the UI can check them.
-      - "127.0.0.1:8080-8090:8080-8090"
-      # - "127.0.0.1:9000-9010:9000-9010"   # example: more ports for your own forwards
+      # runtime, so a POOL is published once: the app claims/frees ports from it as forwards
+      # start/stop — you never pick one by hand. Widen/narrow the range + UC_FWD_PORTS together.
+      - "127.0.0.1:8000-8099:8000-8099"   # 100 PC ports for forwards
+      # Alternative on Linux (NOT Docker Desktop): host networking removes all mapping —
+      # `network_mode: host` above instead of ports: gives forwards truly dynamic PC ports.
     environment:
       # UC_PASSWORD: "change-me"     # optional login; REQUIRED if you publish on anything but 127.0.0.1
       # UC_SECRET: "long random string"  # optional: key for saved passwords (default: random key in the volume)
       # UC_ALLOWED_HOSTS: "myhost.lan"   # extra host names allowed without UC_PASSWORD
-      # UC_FWD_PORTS: "8080-8090,9000-9010"  # must match the ports: published above (default 8080-8090)
+      # UC_FWD_PORTS: "8000-8099,9000-9010"  # must match the ports: published above (default 8000-8099)
       TZ: Europe/London
     volumes:
       - uiable-connect-data:/data

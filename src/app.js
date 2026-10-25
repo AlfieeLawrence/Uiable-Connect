@@ -370,7 +370,9 @@ function vForwards(s, u, v) {
   v.querySelectorAll('[data-stop]').forEach(b => b.onclick = async () => { await call('fwd:stop', s.id, b.dataset.stop); refresh(); });
   v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { const f = fw[b.dataset.del]; if (s.connected) await uc.call('fwd:stop', s.id, f.id).catch(() => {}); fw.splice(b.dataset.del, 1); await persist(); refresh(); });
   v.querySelectorAll('[data-open]').forEach(a => a.onclick = e => { e.preventDefault(); if (a._busy) return; a._busy = true; setTimeout(() => a._busy = false, 1200); window.open('http://localhost:' + a.dataset.open + '/'); });
-  $('#addF').onclick = async () => { let lp = 3000; while (fw.some(f => +f.localPort === lp)) lp++; fw.push({ id: 'f' + Date.now(), name: 'New forward', remoteHost: '127.0.0.1', remotePort: lp, localPort: lp, auto: false }); await persist(); refresh(); };
+  $('#addF').onclick = async () => { // pick the lowest free port — in Docker, from the published pool so it just works
+    let lp = (APP.fwdPorts || []).find(p => !fw.some(f => +f.localPort === p)); if (!lp) { lp = 3000; while (fw.some(f => +f.localPort === lp)) lp++; }
+    fw.push({ id: 'f' + Date.now(), name: 'New forward', remoteHost: '127.0.0.1', remotePort: lp, localPort: lp, auto: false }); await persist(); refresh(); };
 }
 const fmtPorts = ps => ps.length > 8 ? `${ps[0]}–${ps[ps.length - 1]} (+${ps.length - 2} more)` : ps.join(', ');
 
