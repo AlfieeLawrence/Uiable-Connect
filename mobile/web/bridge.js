@@ -136,18 +136,21 @@
       const extra = Number(port) > 0 ? Number(port) : '';
       const r = await exec(id, `
 EP=$(sed -n 's/^UIABLE_PORT=//p' /opt/uiable/.env 2>/dev/null | tail -1)
-PS="$EP 8080 ${extra}"
+EB=$(sed -n 's/^UIABLE_BIND=//p' /opt/uiable/.env 2>/dev/null | tail -1)
+case "$EB" in 0.0.0.0|::|'') EB=127.0.0.1;; esac
+PS="127.0.0.1:$EP $EB:$EP 127.0.0.1:8080 127.0.0.1:${extra}"
 if command -v ss >/dev/null 2>&1; then L=$(ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -un)
 elif command -v netstat >/dev/null 2>&1; then L=$(netstat -tln 2>/dev/null | awk 'NR>2{print $4}' | sed 's/.*://' | sort -un); fi
-for P in $(echo $PS $L | tr ' ' '\\n' | sort -un | head -12); do
-  ( O=$( (curl -fs -m 2 "http://127.0.0.1:$P/api/state" 2>/dev/null || wget -qO- -T 2 "http://127.0.0.1:$P/api/state" 2>/dev/null) | head -c 1500 | tr '\\n' ' ');
-    [ -n "$O" ] && echo "@@$P $O" ) &
+for P in $L; do PS="$PS 127.0.0.1:$P"; done
+for HP in $(echo $PS | tr ' ' '\\n' | sort -u | head -16); do
+  ( O=$( (curl -fs -m 2 "http://$HP/api/state" 2>/dev/null || wget -qO- -T 2 "http://$HP/api/state" 2>/dev/null) | head -c 1500 | tr '\\n' ' ');
+    [ -n "$O" ] && echo "@@$HP $O" ) &
 done; wait`, 15000).catch(() => ({ out: '' }));
       let found = null;
       for (const l of (r.out || '').split('\n')) {
-        const m = l.match(/^@@(\d+)\s+(\{.*)/); if (!m || found) continue;
+        const m = l.match(/^@@(\S+)\s+(\{.*)/); if (!m || found) continue;
         if (!/"version"\s*:/.test(m[2]) && !/uiable/i.test(m[2])) continue;
-        const v = m[2].match(/"version"\s*:\s*"([^"]+)"/); found = { port: Number(m[1]), version: v ? v[1] : null };
+        const v = m[2].match(/"version"\s*:\s*"([^"]+)"/); found = { port: Number(m[1].split(':').pop()), version: v ? v[1] : null };
       }
       return { reachable: !!found, isUiable: !!found, version: found && found.version, port: found ? found.port : (extra || 8080) }; },
     'uiable:open': async (id, mode, port) => { await load(); const srv = data.servers.find(x => x.id === id);
@@ -167,7 +170,7 @@ done; wait`, 15000).catch(() => ({ out: '' }));
     'serial:list': async () => { throw new Error('Serial connections are not supported on phones/tablets'); },
     // sudo: the password file is opened by the shell then deleted; sudo reads it from the still-open fd.
     // With a saved password this never touches the JS side.
-    'sudo:exec': async (id, cmd, pw) => { await load(); const srv = full(id); const usePw = pw || srv.sudoPassword;
+    'sudo:exec': async (id, cmd, pw) => { await load(); const srv = full(id); const usePw = pw || srv.sudoPassword || srv.password;
       if (!usePw) return exec(id, `sudo -n sh -c ${sh(cmd)}`, 180000);
       const home = (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '~' }))).path;
       const dir = home + '/.uiable-connect', pf = dir + '/.p';

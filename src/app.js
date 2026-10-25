@@ -201,6 +201,7 @@ window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !==
 // ---------- Files (SFTP): one pane per server — open a second pane to drag files between servers
 function fpane(srvId, F, onOther) {
   // F = per-pane state { cwd, sel }. Returns { node, load }. Rows are draggable onto the sibling pane.
+  F.sel ||= new Set();
   const node = el(`<div class="fpane"><div class="row" style="margin-bottom:8px"><div class="crumbs grow" data-r="crumbs"></div>
     <button class="sm" data-r="up" title="Up one folder">↑</button><button class="sm" data-r="mk" title="New folder">+ Folder</button><button class="sm" data-r="nf" title="New file">+ File</button>
     <button class="sm" data-r="dl" title="Download selected">Download</button><button class="sm" data-r="rn" title="Rename selected">Rename</button><button class="sm danger" data-r="rm" title="Delete selected">Delete</button><button class="sm" data-r="rf" title="Refresh">⟳</button></div>
@@ -319,7 +320,7 @@ function editServer(s = {}) {
     <div id="ky"><label class="field"><span>Private key ${s.keyName ? '· ' + esc(s.keyName) : ''}</span><textarea id="key" rows="4" class="mono" placeholder="${s.has_privateKey ? 'Key saved (leave blank to keep). ' : ''}Paste -----BEGIN OPENSSH PRIVATE KEY----- …"></textarea></label>
       <div class="row" style="margin:-4px 0 12px"><button class="sm" id="pick">Choose key file…</button><span class="muted small" id="kn"></span></div>
       <label class="field"><span>Key passphrase (optional)</span><input id="pp" type="password" placeholder="${s.has_passphrase ? '•••••• saved' : ''}"></label></div>
-    <label class="field"><span>sudo password (optional)</span><input id="spw" type="password" placeholder="${s.has_sudoPassword ? '•••••• saved (leave blank to keep)' : 'Used for installs and admin commands'}"></label>
+    <label class="field"><span>sudo password (optional)</span><input id="spw" type="password" placeholder="${s.has_sudoPassword ? '•••••• saved (leave blank to keep)' : 'Leave blank to use your login password'}"></label>
     <p class="muted small">Passwords and keys are encrypted on this device and never leave it. With "Key + password" the key is tried first and the password is the fallback.</p><div id="tr" class="small"></div>
     </div></div>
     <footer>${s.id ? '<button class="danger" id="del">Delete</button><span class="spacer"></span>' : ''}<button id="c">Cancel</button><button id="t">Test</button><button class="primary" id="sv">Save</button></footer></div></div>`);

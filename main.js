@@ -89,7 +89,7 @@ h('stats', id => S(id).stats());
 h('exec', (id, cmd, timeout) => S(id).exec(String(cmd), { timeout: Math.min(Number(timeout) || 20000, 180000) }));
 // Run a command with sudo. Uses the saved sudo password when present; a transient pw may be passed for
 // one-off use (never saved). The password reaches sudo's stdin via a file descriptor — see sudoExec.
-h('sudo:exec', async (id, cmd, pw) => { log(id, 'exec-sudo', cmd); const srv = store.full(id); return sudoExec(S(id), String(cmd), pw || srv.sudoPassword || null, { timeout: 180000 }); });
+h('sudo:exec', async (id, cmd, pw) => { log(id, 'exec-sudo', cmd); const srv = store.full(id); return sudoExec(S(id), String(cmd), pw || srv.sudoPassword || srv.password || null, { timeout: 180000 }); });
 h('notify:permission', () => Notification.isSupported());
 h('notify', ({ title, body }) => { if (!Notification.isSupported()) return false;
   const n = new Notification({ title: String(title || 'Uiable Connect'), body: String(body || '') });

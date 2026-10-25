@@ -66,7 +66,7 @@ const H = {
   'fwd:check': port => makeSession({}).checkLocalPort(Number(port), FWD_BIND),
   'stats': id => S(id).stats(),
   'exec': (id, cmd, t) => S(id).exec(String(cmd), { timeout: Math.min(Number(t) || 20000, 180000) }),
-  'sudo:exec': (id, cmd, pw) => { log(id, 'exec-sudo', cmd); const srv = store.full(id); return sudoExec(S(id), String(cmd), pw || srv.sudoPassword || null, { timeout: 180000 }); },
+  'sudo:exec': (id, cmd, pw) => { log(id, 'exec-sudo', cmd); const srv = store.full(id); return sudoExec(S(id), String(cmd), pw || srv.sudoPassword || srv.password || null, { timeout: 180000 }); },
   'uiable:detect': (id, port) => S(id).detectUiable ? S(id).detectUiable(port) : { reachable: false },
   'uiable:latest': latestUiable,
   'uiable:open': async (id, _mode, port) => { const srv = store.list().find(x => x.id === id);
