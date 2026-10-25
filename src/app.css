@@ -171,3 +171,21 @@ tr.hcur td { background: rgba(124,92,255,.07); }
   .prog { left: 12px; }
   .ph-sub { display: none; }
 }
+
+/* ---------- contrast fixes: active/selected states must read clearly ---------- */
+.seg button.active { background: var(--accent); color: #fff; box-shadow: none; }
+.tabs .seg button { padding: 6px 16px; }
+table.list tr.sel td { background: rgba(124,92,255,.18); }
+tr.hcur td { background: rgba(124,92,255,.1); }
+
+/* light-theme counterparts for white-alpha hovers */
+html[data-theme="light"] .srv:hover { background: rgba(15,20,40,.06); }
+html[data-theme="light"] .srv.active { background: rgba(124,92,255,.14); }
+html[data-theme="light"] table.list tbody tr:hover td { background: rgba(15,20,40,.05); }
+html[data-theme="light"] table.list tr.sel td, html[data-theme="light"] tr.hcur td { background: rgba(124,92,255,.12); }
+html[data-theme="light"] .fcols.two .fpane, html[data-theme="light"] .hitem,
+html[data-theme="light"] .arule, html[data-theme="light"] .snip { background: rgba(15,20,40,.03); }
+html[data-theme="light"] .crumbs a:hover { background: rgba(15,20,40,.07); }
+html[data-theme="light"] #panes.split .pane { background: rgba(255,255,255,.45); }
+html[data-theme="light"] .termhost { border-color: rgba(15,20,40,.15); }
+html[data-theme="light"] .modal-bg { background: rgba(30,40,80,.25); }
