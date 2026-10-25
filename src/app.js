@@ -45,6 +45,9 @@ function renderSide() {
       const n = el(`<div class="srv ${panes.some(p => p.srv === s.id) ? 'active' : ''} ${s.quick ? 'quick' : ''}"><span class="dot ${s.connected ? 'on' : ''}"></span><div class="t"><b>${esc(s.name || s.host || s.serialPath)}</b><span class="muted small">${connLabel(s)}</span></div></div>`);
       n.onclick = () => { panes[focusPane].srv = s.id; const t = TABS(s); if (!t.includes(panes[focusPane].tab)) panes[focusPane].tab = t[0]; renderSide(); renderMain(); };
       n.oncontextmenu = e => { e.preventDefault(); srvMenu(e.clientX, e.clientY, s); };
+      let lp = null; // long-press opens the same menu on touch devices (no right-click)
+      n.addEventListener('touchstart', e => { const t = e.touches[0]; lp = setTimeout(() => srvMenu(t.clientX, t.clientY, s), 550); }, { passive: true });
+      ['touchend', 'touchmove', 'touchcancel'].forEach(ev => n.addEventListener(ev, () => clearTimeout(lp), { passive: true }));
       host.append(n);
     }
   }

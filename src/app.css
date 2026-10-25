@@ -235,3 +235,41 @@ button.primary:hover { filter: brightness(1.08); }
 /* Docker host-network banner (dismissible) */
 #hnBar { position: fixed; top: 52px; left: 50%; transform: translateX(-50%); z-index: 140; display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 14px; background: var(--card-solid); border: 1px solid var(--border2); border-radius: 999px; box-shadow: var(--shadow); font-size: 12.5px; max-width: calc(100vw - 24px); }
 #hnBar a { white-space: nowrap; }
+
+/* ====== phones (portrait + small landscape) ====== */
+@media (max-width: 700px), (max-height: 480px) {
+  /* pane header wraps so Connect/Disconnect never gets pushed off-screen */
+  .pane-head { flex-wrap: wrap; row-gap: 6px; column-gap: 6px; }
+  .pane-head .grow { flex-basis: 55%; }
+  .ph-name { font-size: 15px; }
+  .pane-head button { flex-shrink: 0; }
+  /* tabs become a swipeable strip instead of wrapping into a tall stack */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs .seg, #uiPill { flex-shrink: 0; }
+  /* terminal + file toolbars wrap cleanly */
+  .termwrap > .row { flex-wrap: wrap; }
+  #ttabs { max-width: 100%; }
+  .fhead2 { flex-wrap: wrap; row-gap: 4px; }
+  /* wide tables scroll horizontally instead of crushing columns */
+  .card { overflow-x: auto; }
+  .card > table.list { min-width: 560px; }
+  /* modal footers stack evenly; modal fits the screen */
+  .modal { width: 94vw !important; max-height: 92vh; }
+  .modal footer { flex-wrap: wrap; gap: 8px; }
+  .modal footer button { flex: 1 1 40%; justify-content: center; }
+  .grid.cols-2 { grid-template-columns: 1fr; }
+  /* banners sit clear of each other and the screen edge */
+  #hnBar { top: 12px; }
+  #updBar { top: 56px; }
+  #main { padding: 8px 10px; gap: 8px; }
+}
+
+/* phones: sidebar footer collapses to an icon cluster inside the strip */
+@media (max-width: 700px), (max-height: 480px) {
+  .side-foot { flex-wrap: nowrap; gap: 4px; }
+  .side-foot .primary { flex: 0 0 auto; padding: 8px 11px; }
+  .side-foot .primary { font-size: 0; }
+  .side-foot .primary::before { content: '+'; font-size: 16px; }
+  .brand { flex-shrink: 0; }
+}
