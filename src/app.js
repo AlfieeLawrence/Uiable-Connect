@@ -501,16 +501,19 @@ function settingsDialog() {
     <p class="muted small">Applies to open terminals straight away and all new tabs.</p></div>
     <footer><span class="spacer"></span><button class="primary" id="o">Done</button></footer></div></div>`);
   document.body.append(m);
-  m.querySelector('#tt').onchange = e => { localStorage.setItem('uc.ttheme', e.target.value); const t = termTheme();
-    for (const id in st) for (const x of S(id).terms || []) x.term.options.theme = t; };
+  m.querySelector('#tt').onchange = e => applyTermTheme(e.target.value);
   m.querySelector('#o').onclick = () => m.remove();
 }
+const applyTermTheme = name => { localStorage.setItem('uc.ttheme', name); const t = termTheme();
+  document.documentElement.style.setProperty('--tbg', t.background); // the .termhost frame follows the theme
+  for (const id in st) for (const x of st[id].terms || []) { try { x.term.options.theme = t; x.term.refresh(0, x.term.rows - 1); } catch {} } };
 $('#addSrv').onclick = () => editServer();
 $('#quickB').onclick = () => quickDialog();
 $('#setB').onclick = () => settingsDialog();
 $('#bakB').onclick = () => backupDialog();
 document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
-(async () => { setTimeout(() => $('#boot')?.classList.add('gone'), 6000); // never trap the UI behind the splash
+(async () => { const t = termTheme(); document.documentElement.style.setProperty('--tbg', t.background); // restore terminal theme
+  setTimeout(() => $('#boot')?.classList.add('gone'), 6000); // never trap the UI behind the splash
   APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); $('#boot')?.classList.add('gone'); })();
 
 // ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure

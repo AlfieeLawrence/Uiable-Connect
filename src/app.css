@@ -224,3 +224,10 @@ button.primary:hover { filter: brightness(1.08); }
 /* emptier state */
 .empty h1 { letter-spacing: -.03em; }
 .empty button { padding: 10px 22px; }
+
+/* v1.3.6: side-foot never overflows — Add spans the row, icons share the next */
+.side-foot { flex-wrap: wrap; }
+.side-foot .primary { flex: 1 1 100%; justify-content: center; }
+.side-foot button:not(.primary) { flex: 1; min-width: 0; padding: 8px 4px; }
+/* terminal container follows the chosen theme */
+.termhost { background: var(--tbg, #0b0d14); }
