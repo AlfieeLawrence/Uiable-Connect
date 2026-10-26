@@ -1,0 +1,129 @@
+{
+  "name": "Uiable Connect",
+  "versionHint": "1.4.3",
+  "repository": "https://github.com/AlfieeLawrence/Uiable-Connect",
+  "releases": "https://github.com/AlfieeLawrence/Uiable-Connect/releases",
+  "companion": "https://github.com/AlfieeLawrence/uiable",
+  "format": "markdown+yaml-frontmatter",
+  "pages": [
+    {
+      "title": "Documentation",
+      "description": "Guides for installing and using Uiable Connect on desktop, mobile, and Docker.",
+      "order": 0,
+      "slug": "index",
+      "path": "docs/README.md"
+    },
+    {
+      "title": "Getting started",
+      "description": "What Uiable Connect does, which platform to use, and your first connection.",
+      "order": 1,
+      "slug": "getting-started",
+      "path": "docs/getting-started.md"
+    },
+    {
+      "title": "Install on Windows",
+      "description": "Download the portable build or Setup installer, SmartScreen notes, and running from source.",
+      "order": 10,
+      "slug": "install-windows",
+      "path": "docs/install-windows.md"
+    },
+    {
+      "title": "Install on macOS",
+      "description": "Install the Intel or Apple Silicon build and clear Gatekeeper warnings.",
+      "order": 11,
+      "slug": "install-macos",
+      "path": "docs/install-macos.md"
+    },
+    {
+      "title": "Install on Linux (Docker and from source)",
+      "description": "Run the official Docker image or start Connect from source on Linux.",
+      "order": 12,
+      "slug": "install-linux",
+      "path": "docs/install-linux.md"
+    },
+    {
+      "title": "Install on iPhone and iPad",
+      "description": "Sideload the unsigned IPA. App Store status and device requirements.",
+      "order": 13,
+      "slug": "install-ios",
+      "path": "docs/install-ios.md"
+    },
+    {
+      "title": "Install on Android",
+      "description": "Sideload the debug APK from Releases or build a signed release yourself.",
+      "order": 14,
+      "slug": "install-android",
+      "path": "docs/install-android.md"
+    },
+    {
+      "title": "Connections",
+      "description": "Add and edit SSH, Telnet, and serial connections; find hosts on your network.",
+      "order": 20,
+      "slug": "connections",
+      "path": "docs/connections.md"
+    },
+    {
+      "title": "Terminal",
+      "description": "Tabs, tmux, scripts, search, copy/paste, and split view.",
+      "order": 30,
+      "slug": "terminal",
+      "path": "docs/terminal.md"
+    },
+    {
+      "title": "Files (SFTP)",
+      "description": "Browse, upload, download, edit, and copy between servers over SFTP.",
+      "order": 31,
+      "slug": "files-sftp",
+      "path": "docs/files-sftp.md"
+    },
+    {
+      "title": "Port forwards",
+      "description": "Built-in Uiable dashboard tunnel and custom SSH local forwards.",
+      "order": 32,
+      "slug": "port-forwards",
+      "path": "docs/port-forwards.md"
+    },
+    {
+      "title": "Docker on the server",
+      "description": "Open a shell inside a running container from the Terminal tab.",
+      "order": 33,
+      "slug": "docker",
+      "path": "docs/docker.md"
+    },
+    {
+      "title": "Install or update Uiable on a server",
+      "description": "Detect Uiable, choose port and bind, optional first account, run installer over SSH.",
+      "order": 40,
+      "slug": "install-uiable",
+      "path": "docs/install-uiable.md"
+    },
+    {
+      "title": "Health and alerts",
+      "description": "Read-only health checks and threshold alerts with system notifications.",
+      "order": 41,
+      "slug": "health-alerts",
+      "path": "docs/health-alerts.md"
+    },
+    {
+      "title": "Backup and restore",
+      "description": "Export and import encrypted .ucbackup files across desktop, mobile, and Docker.",
+      "order": 42,
+      "slug": "backup-restore",
+      "path": "docs/backup-restore.md"
+    },
+    {
+      "title": "Themes",
+      "description": "App chrome themes and terminal colour schemes.",
+      "order": 43,
+      "slug": "themes",
+      "path": "docs/themes.md"
+    },
+    {
+      "title": "Troubleshooting",
+      "description": "SmartScreen, Gatekeeper, Docker forwards, iOS blank screen, keys, and common fixes.",
+      "order": 90,
+      "slug": "troubleshooting",
+      "path": "docs/troubleshooting.md"
+    }
+  ]
+}

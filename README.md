@@ -1,10 +1,16 @@
-﻿# Uiable Connect
+# Uiable Connect
 
 > Desktop companion to [Uiable](https://github.com/AlfieeLawrence/uiable), the lightweight self-hosted Linux server dashboard. **Download:** [latest release](https://github.com/AlfieeLawrence/uiable-connect/releases/latest).
 
 Windows, macOS, iPhone/iPad and Android app for your servers: saved logins (SSH, Telnet and serial), terminal tabs, SFTP file manager, live stats and SSH port forwards.
 It works whether or not Uiable is installed on the server. If Uiable is running on the server — on **any** port, detected via its `/api/state` endpoint —
 an **Open Uiable dashboard** button appears and starts the tunnel for you.
+
+## Documentation
+
+User guides (install, connections, terminal, files, forwards, Uiable install, backup, troubleshooting) live in **[docs/](docs/README.md)**.
+
+A machine-readable page list for the website is in [docs/manifest.json](docs/manifest.json).
 
 ## Run the ready-made build (no install)
 1. Unzip `Uiable-Connect-win-x64.zip` anywhere, e.g. `C:\Users\you\Apps\Uiable Connect`.
