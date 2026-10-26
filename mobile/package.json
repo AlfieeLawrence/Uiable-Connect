@@ -1,6 +1,6 @@
 {
   "name": "uiable-connect-mobile",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "private": true,
   "description": "Uiable Connect for iPhone, iPad and Android (Capacitor). Reuses ../src for the UI.",
   "author": "Alfie Lawrence",

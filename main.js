@@ -29,7 +29,7 @@ const log = (id, ev, detail) => { if (store && store.setting('history', true) &&
 function createWindow() {
   win = new BrowserWindow({ width: 1280, height: 820, minWidth: 900, minHeight: 560, backgroundColor: '#0b0d14', title: 'Uiable Connect',
     icon: path.join(__dirname, 'src', 'icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false, spellcheck: false, backgroundThrottling: true } });
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false, spellcheck: false, backgroundThrottling: true, webviewTag: true } });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   // native right-click menu for text fields and selected text (the terminal has its own menu)
@@ -143,7 +143,7 @@ h('uiable:open', async (id, mode, port) => {
   await s.startForward(f);
   const url = `http://127.0.0.1:${f.localPort}/`;
   await waitHttp(f.localPort); // warm the tunnel so nothing ever loads an error page
-  // embed/tunnel: only ensure the forward — UI iframes this URL. browser: system default. else: detach BrowserWindow.
+  // embed/tunnel: only ensure the forward — UI loads URL in <webview> (iframe blocked by Uiable X-Frame-Options). browser: system default. else: detach BrowserWindow.
   if (mode === 'embed' || mode === 'tunnel') return url;
   if (mode === 'browser') { shell.openExternal(url); return url; }
   const w0 = uiWins.get(id); if (w0 && !w0.isDestroyed()) { w0.focus(); return url; }

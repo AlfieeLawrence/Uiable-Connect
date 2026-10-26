@@ -246,7 +246,7 @@ const notConn = s => `<div class="empty"><div><p class="muted">This connection i
 // ---------- host keys: trust on first use. Backends refuse an unknown/changed key before sending any password or key.
 const hostKeyErr = e => { const m = /HOSTKEY_(UNKNOWN|CHANGED) (SHA256:\S+)/.exec(e && e.message || ''); return m && { changed: m[1] === 'CHANGED', fp: m[2] }; };
 function trustPrompt(s, k) { return new Promise(res => {
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:560px"><header><h3 class="grow">${k.changed ? '⚠ Host key changed' : 'Trust this server?'}</h3></header><div class="body">
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:min(560px,100%)"><header><h3 class="grow">${k.changed ? '⚠ Host key changed' : 'Trust this server?'}</h3></header><div class="body">
     ${k.changed ? `<p class="pill err" style="display:block">The host key of <b>${esc(s.host)}</b> is different from the one you trusted before. This happens after a reinstall or a new server at that address, but it can also mean someone is intercepting the connection. Nothing was sent.</p>`
       : `<p>First connection to <b>${esc(s.host)}</b>. Check the fingerprint matches the server (run <code class="mono">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on it), then trust it.</p>`}
     <p class="muted small" style="margin-bottom:4px">${k.changed ? 'Previously trusted' : ''}</p>${k.changed ? `<p class="mono small" style="overflow-wrap:anywhere">${esc(s.hostKey || '')}</p><p class="muted small" style="margin-bottom:4px">Now offered</p>` : '<p class="muted small" style="margin-bottom:4px">SHA256 fingerprint</p>'}
@@ -304,7 +304,7 @@ async function openUi(id, mode) { const u = S(id); if (u.uiOpening) return null;
     return u.uiableUrl || url;
   } finally { u.uiOpening = false; } }
 
-/** Uiable dashboard tab: embed via SSH tunnel; detach/window = app BrowserWindow; browser = system default. */
+/** Uiable dashboard tab: embed via <webview> (iframe blocked by Uiable X-Frame-Options: DENY); detach/window = BrowserWindow; browser = system default. */
 async function vUiable(s, u, v) {
   if (!s.connected) { v.innerHTML = notConn(s); return; }
   const ui = u.uiable || {};
@@ -321,14 +321,31 @@ async function vUiable(s, u, v) {
       <button class="sm" id="uiDetach" title="Open in a new Connect window">Detach</button>
       <button class="sm" id="uiWeb" title="Open in an in-app browser window">Open in window</button>
       <button class="sm" id="uiBrowser" title="Open in your default system browser">System browser</button>
-    `)}<div class="uiable-frame-wrap"><div class="uiable-loading muted small" id="uiLoad">Starting tunnel…</div><iframe class="uiable-frame hidden" id="uiFrame" title="Uiable dashboard" allow="fullscreen"></iframe></div>
+    `)}<div class="uiable-frame-wrap"><div class="uiable-loading muted small" id="uiLoad">Starting tunnel…</div><webview class="uiable-frame hidden" id="uiFrame" title="Uiable dashboard" allowpopups="false" webpreferences="contextIsolation=yes, sandbox=yes, spellcheck=false"></webview></div>
     <p class="muted small uiable-note">In-tab view uses the same SSH port forward as <b>Open Uiable dashboard</b>. Ports → <b>open</b> still uses your system browser.</p></div>`;
   const frame = $('#uiFrame', v), loadEl = $('#uiLoad', v);
+  // <webview> is a top-level guest (not framed), so Uiable X-Frame-Options: DENY / frame-ancestors 'none' do not blank it.
   const showUrl = (url) => {
     u.uiableUrl = url;
-    loadEl.classList.add('hidden');
+    const onFail = (e) => {
+      // ignore aborted navigations from reload/src changes
+      if (e && (e.errorCode === -3 || e.isMainFrame === false)) return;
+      const msg = (e && (e.errorDescription || e.message)) || 'load failed';
+      loadEl.classList.remove('hidden');
+      loadEl.textContent = 'Dashboard failed to load in-tab (' + msg + '). Try Detach or System browser.';
+      frame.classList.add('hidden');
+    };
+    const onOk = () => { loadEl.classList.add('hidden'); frame.classList.remove('hidden'); };
+    if (frame._uiFail) frame.removeEventListener('did-fail-load', frame._uiFail);
+    if (frame._uiOk) frame.removeEventListener('did-finish-load', frame._uiOk);
+    frame._uiFail = onFail; frame._uiOk = onOk;
+    frame.addEventListener('did-fail-load', onFail);
+    frame.addEventListener('did-finish-load', onOk);
+    loadEl.classList.remove('hidden');
+    loadEl.textContent = 'Loading dashboard…';
     frame.classList.remove('hidden');
-    if (frame.getAttribute('src') !== url) frame.src = url;
+    if (frame.getAttribute('src') !== url) frame.setAttribute('src', url);
+    else if (typeof frame.reload === 'function') frame.reload();
   };
   const embed = async () => {
     loadEl.classList.remove('hidden'); loadEl.textContent = 'Starting tunnel…';
@@ -338,7 +355,7 @@ async function vUiable(s, u, v) {
       if (url) showUrl(url); else loadEl.textContent = 'Could not start tunnel';
     } catch (e) { loadEl.textContent = e.message || String(e); }
   };
-  $('#uiReload', v).onclick = () => { if (u.uiableUrl) { frame.src = u.uiableUrl; } else embed(); };
+  $('#uiReload', v).onclick = () => { if (u.uiableUrl) showUrl(u.uiableUrl); else embed(); };
   $('#uiEmbed', v).onclick = () => embed();
   $('#uiDetach', v).onclick = () => openUi(s.id, 'window');
   $('#uiWeb', v).onclick = () => openUi(s.id, 'window');
@@ -420,7 +437,7 @@ function vOverview(s, u, v) {
       const na = k === 'gpu' && !gpuAvail ? ' <span class="muted small">(not on this host)</span>' : '';
       return `<div class="metric-cust-row" data-k="${k}"><label class="atog"><input type="checkbox" data-vis="${k}" ${checked ? 'checked' : ''}> <span>${esc(METRIC_LABELS[k] || k)}${na}</span></label><select class="metric-size-sel" data-size-for="${k}" title="Card size">${sizeOpts(k)}</select><span class="spacer"></span><button type="button" class="sm" data-up="${k}" title="Move up">↑</button><button type="button" class="sm" data-dn="${k}" title="Move down">↓</button></div>`;
     };
-    const m = el(`<div class="modal-bg"><div class="modal" style="width:480px"><header><h3>Customize metrics</h3></header><div class="body">
+    const m = el(`<div class="modal-bg"><div class="modal" style="width:min(480px,100%)"><header><h3>Customize metrics</h3></header><div class="body">
       <p class="muted small" style="margin:0 0 10px">Drag cards on the overview to rearrange. Untick to hide. Size: <b>Small</b> (¼), <b>Half</b> (½), or <b>Full</b> width.</p>
       <div id="mCustGrid">${prefs.order.map(row).join('')}</div>
     </div><footer><button type="button" class="sm" id="mCustReset">Reset</button><span class="spacer"></span><button type="button" class="sm" id="mCustCancel">Cancel</button><button type="button" class="primary" id="mCustSave">Save</button></footer></div></div>`);
@@ -561,7 +578,7 @@ function vTerminal(s, u, v) {
   const TERM_TAB_WARN = 10;
   u.termSplit = !!u.termSplit && !ON_MOBILE;
   u.termUseSudo = !!u.termUseSudo;
-  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT" title="New tab (Ctrl+T) · max ${MAX_TERM_TABS}">+ Tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button><button class="sm" id="dockT" title="Open a shell inside a running Docker container on the server">◫ Docker</button><label class="row small term-sudo" style="gap:6px;margin:0" title="New tabs open a root shell using the saved sudo password"><input type="checkbox" id="termSudo"> Use sudo</label>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button>${!ON_MOBILE ? '<button class="sm" id="termSplit" title="Show two terminals side by side">⇄ Split</button>' : ''}<span class="spacer"></span><span class="muted small" id="tabHint"></span><button class="sm" id="findB" title="Search in the terminal (Ctrl+F)">🔍</button></div>
+  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT" title="New tab (Ctrl+T) · max ${MAX_TERM_TABS}">+ Tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button><button class="sm" id="dockT" title="Open a shell inside a running Docker container on the server">◫ Docker</button><label class="row small term-sudo" style="gap:6px;margin:0" title="New tabs open a root shell using the saved sudo password"><input type="checkbox" id="termSudo"> Use sudo</label>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button>${!ON_MOBILE ? '<button class="sm" id="termSplit" title="Show two terminals side by side">⇄ Split</button>' : ''}<span class="spacer"></span><span class="muted small" id="tabHint"></span><button class="sm" id="findB" title="Search in the terminal (Ctrl+F)" aria-label="Search"><svg class="foot-ico" viewBox="0 0 24 24" aria-hidden="true" style="width:1.1em;height:1.1em;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round"><circle cx="11" cy="11" r="6"/><path d="m20 20-3.5-3.5"/></svg></button></div>
     <div class="termhosts ${u.termSplit ? 'split' : ''}" id="ths"><div class="termhost" id="th" data-side="a"></div><div class="termhost ${u.termSplit ? '' : 'hidden'}" id="th2" data-side="b"></div></div>
     <div class="findbar hidden" id="fb"><input id="fbi" placeholder="Find in terminal…"><button class="sm" id="fbp" title="Previous">↑</button><button class="sm" id="fbn" title="Next">↓</button><button class="sm" id="fbx">✕</button></div></div>`;
   const syncAddBtns = () => {
@@ -907,7 +924,7 @@ function pickList(title, labels, vals) { return new Promise(res => { // chooser:
     const sub = typeof l === 'object' && l.sub ? `<div class="pip-sub">${esc(l.sub)}</div>` : '';
     return `<div class="pickrow" data-i="${i}" role="button" tabindex="0"><span class="pip">${i + 1}</span><div><div class="pip-host">${esc(main)}</div>${sub}</div></div>`;
   }).join('');
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:440px"><header><h3>${esc(title)}</h3></header><div class="body picklist-body">${rows || '<p class="muted" style="padding:12px 16px">Nothing to pick</p>'}</div><footer><span class="spacer"></span><button id="c">Cancel</button></footer></div></div>`);
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:min(440px,100%)"><header><h3>${esc(title)}</h3></header><div class="body picklist-body">${rows || '<p class="muted" style="padding:12px 16px">Nothing to pick</p>'}</div><footer><span class="spacer"></span><button id="c">Cancel</button></footer></div></div>`);
   document.body.append(m); focusModal(m);
   m.querySelector('#c').onclick = () => { m.remove(); res(null); };
   const choose = i => { const v = vals[i]; m.remove(); res(v); };
@@ -945,8 +962,8 @@ function vForwards(s, u, v) {
     <table class="list"><thead><tr><th>Name</th><th>Direction</th><th>Server host</th><th>Server port</th><th>PC host</th><th>PC port</th><th>Auto</th><th>Status</th><th></th></tr></thead><tbody>
     ${fw.map((f, i) => { const a = stat(f.id); const remote = f.dir === 'remote'; return `<tr data-i="${i}"><td><input data-k="name" value="${esc(f.name)}"></td>
       <td><select data-k="dir" ${f.builtin ? 'disabled' : ''}><option value="local" ${!remote ? 'selected' : ''}>PC listens</option><option value="remote" ${remote ? 'selected' : ''}>Server listens</option></select></td>
-      <td><input data-k="remoteHost" value="${esc(f.remoteHost)}" title="${remote ? 'Where the server listens' : 'Server-side target'}"></td><td style="width:100px"><input data-k="remotePort" type="number" value="${f.remotePort}"></td>
-      <td style="width:130px"><input data-k="localHost" value="${esc(f.localHost || '127.0.0.1')}" ${remote ? '' : 'disabled'} title="PC-side target (Server listens only)"></td><td style="width:100px"><input data-k="localPort" type="number" value="${f.localPort}"></td>
+      <td><input data-k="remoteHost" value="${esc(f.remoteHost)}" title="${remote ? 'Where the server listens' : 'Server-side target'}"></td><td style="width:min(100px,100%)"><input data-k="remotePort" type="number" value="${f.remotePort}"></td>
+      <td style="width:min(130px,100%)"><input data-k="localHost" value="${esc(f.localHost || '127.0.0.1')}" ${remote ? '' : 'disabled'} title="PC-side target (Server listens only)"></td><td style="width:min(100px,100%)"><input data-k="localPort" type="number" value="${f.localPort}"></td>
       <td><input type="checkbox" data-k="auto" ${f.auto ? 'checked' : ''} title="Start when connecting"></td>
       <td>${a.active ? `<span class="pill ok">● On${a.conns ? ' · ' + a.conns : ''}</span>` : '<span class="pill">Off</span>'}</td>
       <td class="nowrap right">${a.active ? `${!remote ? `<a href="#" data-open="${f.localPort}">open</a>` : ''} <button class="sm" data-stop="${f.id}">Stop</button>` : `<button class="sm primary" data-start="${i}" ${s.connected ? '' : 'disabled'}>Start</button>`} ${f.builtin ? '' : `<button class="sm danger" data-del="${i}">✕</button>`}</td></tr>`; }).join('')}
@@ -990,10 +1007,10 @@ function editServer(s = {}) {
     <label class="field"><span>Name</span><input id="n" placeholder="Home server" value="${esc(s.name)}"></label>
     ${canTelnet || canSerial || canLocal ? `<div class="seg" style="margin-bottom:12px;flex-wrap:wrap"><button data-c="ssh">SSH</button>${canTelnet ? '<button data-c="telnet">Telnet</button><button data-c="raw">Raw TCP</button>' : ''}${canSerial ? '<button data-c="serial">Serial</button>' : ''}${canLocal ? '<button data-c="local">Local shell</button>' : ''}</div>` : ''}
     <div id="ctLoc" class="hidden"><p class="muted small" style="margin-bottom:12px">A terminal on ${APP.platform === 'web' ? 'the machine running this Docker app' : 'this device'} — no server needed. Commands only (no full-screen apps like vim).</p></div>
-    <div id="ctNet"><div class="row"><label class="field grow"><span>Host / IP</span><input id="h" placeholder="192.168.1.20" value="${esc(s.host)}"></label><label class="field" style="width:90px"><span>Port</span><input id="p" type="number" value="${s.port || 22}"></label></div>
+    <div id="ctNet"><div class="row"><label class="field grow"><span>Host / IP</span><input id="h" placeholder="192.168.1.20" value="${esc(s.host)}"></label><label class="field" style="width:min(90px,100%)"><span>Port</span><input id="p" type="number" value="${s.port || 22}"></label></div>
     <div class="row" style="margin:-4px 0 12px">${canScan ? '<button class="sm" id="scan">Find on my network</button>' : ''}${APP.platform === 'desktop' && !s.id ? '<button class="sm" id="impSsh">Import ~/.ssh/config</button>' : ''}</div></div>
     <div id="ctSer" class="hidden"><div class="row"><label class="field grow"><span>Serial port</span><select id="sp"><option value="">loading…</option></select></label>
-      <label class="field" style="width:130px"><span>Baud</span><select id="bd">${[300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map(b => `<option ${b === (s.baudRate || 115200) ? 'selected' : ''}>${b}</option>`).join('')}</select></label></div>
+      <label class="field" style="width:min(130px,100%)"><span>Baud</span><select id="bd">${[300, 1200, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map(b => `<option ${b === (s.baudRate || 115200) ? 'selected' : ''}>${b}</option>`).join('')}</select></label></div>
       <div class="row" style="margin:-4px 0 12px"><button class="sm" id="spr">⟳ Refresh ports</button><span class="muted small">USB and paired Bluetooth devices appear as COM/serial ports</span></div></div>
     <div id="ctSsh">
     <div class="msec">Sign in</div>
@@ -1087,7 +1104,7 @@ function editServer(s = {}) {
 }
 // ---------- quick connect (one-off, never saved) + app settings
 function quickDialog() {
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:430px"><header><h3>Quick connect</h3></header><div class="body">
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:min(430px,100%)"><header><h3>Quick connect</h3></header><div class="body">
     <p class="muted small" style="margin-bottom:12px">Connect once without saving — the connection disappears when you disconnect.</p>
     <label class="field"><span>Address</span><input id="qh" placeholder="192.168.1.20  or  root@192.168.1.20:2222"></label>
     <div class="row"><label class="field grow"><span>Username</span><input id="qu" placeholder="root"></label>
@@ -1111,7 +1128,7 @@ function settingsDialog() {
   const curT = localStorage.getItem('uc.ttheme') || 'dark';
   const curA = localStorage.getItem(THEME_KEY) || 'dark';
   const themes = [['dark', 'Dark'], ['light', 'Light'], ['solarized', 'Solarized'], ['dracula', 'Dracula'], ['monokai', 'Monokai'], ['system', 'System']];
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:400px"><header><h3>Settings</h3></header><div class="body">
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:min(400px,100%)"><header><h3>Settings</h3></header><div class="body">
     <label class="field"><span>App theme</span><select id="th">${themes.map(([v, l]) => `<option value="${v}" ${v === curA ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <label class="field"><span>Terminal theme</span><select id="tt">${Object.keys(TERM_THEMES).map(t => `<option value="${t}" ${t === curT ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></label>
     <p class="muted small">App theme colours the whole UI (including Solarized, Dracula and Monokai). Picking an app theme also matches the terminal; you can still override the terminal below. Both save on this device.</p></div>
@@ -1152,7 +1169,7 @@ function hnShow() {
 }
 function hnHide() { $('#hnBar')?.remove(); }
 function hnDialog() {
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:580px"><header><h3>Use any PC port in Docker</h3></header><div class="body small">
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:min(580px,100%)"><header><h3>Use any PC port in Docker</h3></header><div class="body small">
     <p><b>Option 1 — host networking (recommended).</b> The container shares this PC's network, so every port works:</p>
     <p class="muted">1. Docker Desktop → <b>Settings → Resources → Network</b> → tick <b>Enable host networking</b> → Apply &amp; restart<br>
     2. Recreate the container in host mode:</p>

@@ -38,7 +38,7 @@
   display: flex; align-items: center; gap: 10px;
   padding: 4px 8px 12px; font-size: 15px;
 }
-.brand img { width: 26px; height: 26px; border-radius: 7px; }
+.brand img, .brand-logo { width: 1.7em; height: 1.7em; border-radius: 0.45em; flex-shrink: 0; }
 .brand b { font-weight: 700; letter-spacing: -.02em; }
 
 #srvlist {
@@ -85,6 +85,13 @@
 .side-foot button:not(.primary) {
   min-height: 42px; border-radius: 12px; border-color: var(--border2);
   background: var(--input); font-size: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.side-foot .foot-ico {
+  width: 1.25em; height: 1.25em;
+  stroke: currentColor; fill: none; stroke-width: 1.75;
+  stroke-linecap: round; stroke-linejoin: round;
 }
 
 #main {
@@ -131,9 +138,12 @@ body.drawer-open #scrim {
 /* ---------- tabs ---------- */
 .tabs {
   display: flex; gap: 8px; align-items: center;
-  flex-wrap: nowrap; min-width: 0;
+  flex-wrap: wrap; min-width: 0;
 }
-.tabs .seg { flex-shrink: 0; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.tabs .seg {
+  flex: 1 1 auto; min-width: 0; flex-shrink: 1;
+  overflow-x: auto; scrollbar-width: none; max-width: 100%;
+}
 .tabs .seg::-webkit-scrollbar { display: none; }
 .tabs .seg button {
   text-transform: capitalize; padding: 7px 14px; font-weight: 550;
@@ -141,6 +151,7 @@ body.drawer-open #scrim {
 #uiPill {
   display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap;
   justify-content: flex-end; min-width: 0;
+  flex: 1 1 auto;
 }
 
 /* ---------- pills / misc ---------- */
@@ -277,14 +288,17 @@ button.sm.disabled, button.sm:disabled {
   border: 1px solid var(--border2); border-radius: 12px; overflow: hidden;
   background: var(--tbg, #0b0d14);
 }
-.uiable-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+.uiable-frame {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border: 0; background: #0b0d14; display: flex;
+}
 .uiable-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .uiable-note { margin: 0; }
 .term-sudo { align-items: center; user-select: none; white-space: nowrap; }
 .term-sudo input { margin: 0; }
 
 .spark polyline { vector-effect: non-scaling-stroke; }
-#ttabs { max-width: 60%; overflow-x: auto; scrollbar-width: none; }
+#ttabs { flex: 1 1 auto; min-width: 0; max-width: calc(100% - 9rem); overflow-x: auto; scrollbar-width: none; }
 #ttabs::-webkit-scrollbar { display: none; }
 .findbar {
   display: flex; gap: 6px; align-items: center; padding: 6px 8px;
@@ -304,6 +318,8 @@ button.sm.disabled, button.sm:disabled {
 .kx button.active { background: var(--accent); color: #fff; }
 
 /* ---------- editor ---------- */
+/* scale audit: modal clamp — keep dialogs inside the viewport when zoomed/narrow */
+.modal { max-width: calc(100vw - 28px); }
 .editor-modal { width: min(1100px, 96vw); }
 .editor-modal .ed-body { padding: 0 !important; display: flex; min-height: 0; overflow: hidden !important; flex: 1; }
 .ed {
@@ -386,7 +402,7 @@ button.sm.disabled, button.sm:disabled {
 .metric-size-sel {
   width: auto; min-width: 84px; padding: 5px 8px; font-size: 12.5px;
 }
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
   .metric-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric[data-size="sm"] { grid-column: span 1; }
   .metric[data-size="half"],
@@ -587,13 +603,47 @@ html[data-theme="light"] #toasts > * {
   html[data-theme="light"] #side { background: #fff; }
 }
 
-TABLET  (<= 960px)
+/* scale audit: large desktop */
+@media (min-width: 1600px) {
+  #main { padding-left: 22px; padding-right: 22px; }
+}
+/* scale audit: desktop toasts */
+@media (min-width: 761px) {
+  #toasts { bottom: calc(16px + var(--sab)); }
+  .prog { max-width: calc(100vw - var(--side-w) - 32px); }
+}
+/* =========================================================
+   TABLET / NARROW DESKTOP  (<= 1100px)
+   Sidebar still visible (no hamburger). Keep feature tabs and the
+   Uiable status strip from overlapping; status drops to its own row.
+   Also keep terminal tab strip + New tab from colliding with status.
    ========================================================= */
-@media (max-width: 960px) {
+@media (max-width: 1100px) and (min-width: 761px) {
   :root { --side-w: 220px; }
   #main { padding-left: 14px; padding-right: 14px; }
   .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  #ttabs { max-width: 100%; }
+  .tabs { flex-wrap: wrap; align-items: stretch; }
+  .tabs .spacer { display: none; }
+  .tabs .seg { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  #uiPill {
+    flex: 1 1 100%;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .termwrap > .row { flex-wrap: wrap; gap: 6px; min-width: 0; align-items: center; }
+  #ttabs { flex: 1 1 12rem; min-width: 0; max-width: 100%; }
+  #newT, #tmuxT, #dockT, #snipB, #findB, #termSplit { flex-shrink: 0; }
+  /* scale audit: mid extras */
+  .metric-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric[data-size="half"], .metric[data-size="full"] { grid-column: span 2; }
+  .metric[data-size="sm"] { grid-column: span 1; }
+  #peerSel { max-width: 100%; flex: 1 1 10rem; }
+  .fhead, .fhead2, .uiable-bar { flex-wrap: wrap; }
+  .pane-head { row-gap: 6px; }
+  .stat-big { font-size: 22px; }
+}
+@media (max-width: 960px) and (min-width: 761px) {
+  .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* =========================================================
@@ -643,6 +693,15 @@ TABLET  (<= 960px)
     flex-direction: column; gap: 2px; font-weight: 600;
   }
   #uiPill { width: 100%; justify-content: flex-start; }
+  /* scale audit: phone extras */
+  #ttabs { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  #newT, #tmuxT, #dockT, #snipB, #findB { flex-shrink: 0; }
+  .uiable-bar { flex-wrap: wrap; gap: 8px; }
+  .uiable-frame-wrap { min-height: 220px; }
+  #toasts { left: 12px; right: 12px; max-width: none; align-items: stretch; }
+  .prog { left: 12px; right: 12px; max-width: none; }
+  #peerSel { max-width: 100%; }
+  .burger { font-size: 1.15em; min-width: 42px; }
 
   .grid.cols-4 { grid-template-columns: 1fr 1fr; gap: 10px; }
   .grid.cols-2 { grid-template-columns: 1fr; }
