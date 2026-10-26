@@ -286,6 +286,36 @@ async function openUi(id, mode) { const u = S(id); if (u.uiOpening) return; u.ui
 function vOverview(s, u, v) {
   if (!s.connected) { v.innerHTML = notConn(s); return; }
   u.metricOpen ||= { cpu: true, mem: true, load: true, gpu: true, net: true, diskio: true, uptime: false, uiable: false, storage: true };
+  const METRIC_KEYS = ['cpu', 'mem', 'load', 'net', 'diskio', 'gpu', 'uptime', 'uiable', 'storage'];
+  const METRIC_LABELS = { cpu: 'CPU', mem: 'Memory', load: 'Load average', net: 'Network I/O', diskio: 'Disk I/O', gpu: 'GPU', uptime: 'Uptime & host', uiable: 'Uiable', storage: 'Storage' };
+  const METRIC_SIZES = ['sm', 'half', 'full'];
+  const DEFAULT_SIZES = { cpu: 'half', mem: 'half', load: 'half', net: 'half', diskio: 'half', gpu: 'half', uptime: 'half', uiable: 'full', storage: 'full' };
+  const normSize = (s) => METRIC_SIZES.includes(s) ? s : 'half';
+  const loadMetricPrefs = () => {
+    const base = { order: METRIC_KEYS.slice(), hidden: [], sizes: { ...DEFAULT_SIZES } };
+    try {
+      const p = JSON.parse(localStorage.getItem('uc.metrics') || 'null');
+      if (!p || !Array.isArray(p.order)) return base;
+      // Migrate older shape: order (grid) + fullOrder (uiable/storage)
+      let order = p.order.filter(k => METRIC_KEYS.includes(k));
+      if (Array.isArray(p.fullOrder)) {
+        for (const k of p.fullOrder) if (METRIC_KEYS.includes(k) && !order.includes(k)) order.push(k);
+      }
+      for (const k of METRIC_KEYS) if (!order.includes(k)) order.push(k);
+      const hidden = Array.isArray(p.hidden) ? p.hidden.filter(k => METRIC_KEYS.includes(k)) : [];
+      const sizes = { ...DEFAULT_SIZES };
+      if (p.sizes && typeof p.sizes === 'object') {
+        for (const k of METRIC_KEYS) if (p.sizes[k] != null) sizes[k] = normSize(p.sizes[k]);
+      } else if (Array.isArray(p.fullOrder)) {
+        // pre-size prefs: pinned full-width items stay full
+        for (const k of p.fullOrder) if (METRIC_KEYS.includes(k)) sizes[k] = 'full';
+      }
+      return { order, hidden, sizes };
+    } catch { return base; }
+  };
+  const saveMetricPrefs = (p) => { try { localStorage.setItem('uc.metrics', JSON.stringify({ order: p.order, hidden: p.hidden, sizes: p.sizes })); } catch {} };
+  let prefs = loadMetricPrefs();
+  const sizeOf = (k) => normSize(prefs.sizes && prefs.sizes[k]);
   const fmtN = (n, d = 0) => n == null || isNaN(n) ? '–' : (+n).toFixed(d);
   const fmtRate = n => n == null || isNaN(n) ? '–' : fmtB(n) + '/s';
   const histBlock = (key, unit, stroke) => {
@@ -308,35 +338,121 @@ function vOverview(s, u, v) {
       <div class="row small metric-hist-stats">${line('Now', hs.last)}${line('Avg', hs.avg)}${line('Min', hs.min)}${line('Max', hs.max)}</div>
     </div>`;
   };
+  const wrapCard = (k, body) => {
+    const open = u.metricOpen[k] !== false ? 'open' : '';
+    const sz = sizeOf(k);
+    return `<details class="card metric metric-size-${sz}" data-k="${k}" data-size="${sz}" ${open}>${body}</details>`;
+  };
+  const sumHead = (titleHtml) => `<summary><span class="metric-drag" title="Drag to reorder" aria-label="Drag to reorder" draggable="false">⋮⋮</span><div class="grow">${titleHtml}</div><span class="metric-chev" aria-hidden="true"></span></summary>`;
+  const customizeMetrics = () => {
+    prefs = loadMetricPrefs();
+    const gpuAvail = !!(u.stats && u.stats.gpu);
+    const sizeOpts = (k) => METRIC_SIZES.map(sz => {
+      const lab = sz === 'sm' ? 'Small' : sz === 'half' ? 'Half' : 'Full';
+      return `<option value="${sz}" ${sizeOf(k) === sz ? 'selected' : ''}>${lab}</option>`;
+    }).join('');
+    const row = (k) => {
+      const checked = !prefs.hidden.includes(k);
+      const na = k === 'gpu' && !gpuAvail ? ' <span class="muted small">(not on this host)</span>' : '';
+      return `<div class="metric-cust-row" data-k="${k}"><label class="atog"><input type="checkbox" data-vis="${k}" ${checked ? 'checked' : ''}> <span>${esc(METRIC_LABELS[k] || k)}${na}</span></label><select class="metric-size-sel" data-size-for="${k}" title="Card size">${sizeOpts(k)}</select><span class="spacer"></span><button type="button" class="sm" data-up="${k}" title="Move up">↑</button><button type="button" class="sm" data-dn="${k}" title="Move down">↓</button></div>`;
+    };
+    const m = el(`<div class="modal-bg"><div class="modal" style="width:480px"><header><h3>Customize metrics</h3></header><div class="body">
+      <p class="muted small" style="margin:0 0 10px">Drag cards on the overview to rearrange. Untick to hide. Size: <b>Small</b> (¼), <b>Half</b> (½), or <b>Full</b> width.</p>
+      <div id="mCustGrid">${prefs.order.map(row).join('')}</div>
+    </div><footer><button type="button" class="sm" id="mCustReset">Reset</button><span class="spacer"></span><button type="button" class="sm" id="mCustCancel">Cancel</button><button type="button" class="primary" id="mCustSave">Save</button></footer></div></div>`);
+    const host = $('#mCustGrid', m);
+    const keys = () => [...host.querySelectorAll('.metric-cust-row')].map(r => r.dataset.k);
+    host.querySelectorAll('[data-up]').forEach(b => b.onclick = () => {
+      const ks = keys(); const i = ks.indexOf(b.getAttribute('data-up')); if (i <= 0) return;
+      const rows = [...host.children]; host.insertBefore(rows[i], rows[i - 1]);
+    });
+    host.querySelectorAll('[data-dn]').forEach(b => b.onclick = () => {
+      const ks = keys(); const i = ks.indexOf(b.getAttribute('data-dn')); if (i < 0 || i >= ks.length - 1) return;
+      const rows = [...host.children]; host.insertBefore(rows[i + 1], rows[i]);
+    });
+    $('#mCustReset', m).onclick = () => {
+      prefs = { order: METRIC_KEYS.slice(), hidden: [], sizes: { ...DEFAULT_SIZES } };
+      saveMetricPrefs(prefs);
+      m.remove(); draw();
+    };
+    $('#mCustCancel', m).onclick = () => m.remove();
+    m.addEventListener('click', e => { if (e.target === m) m.remove(); });
+    $('#mCustSave', m).onclick = () => {
+      const order = keys();
+      const hidden = [];
+      m.querySelectorAll('[data-vis]').forEach(inp => { if (!inp.checked) hidden.push(inp.dataset.vis); });
+      const sizes = { ...DEFAULT_SIZES };
+      m.querySelectorAll('[data-size-for]').forEach(sel => { sizes[sel.dataset.sizeFor] = normSize(sel.value); });
+      prefs = { order, hidden, sizes };
+      saveMetricPrefs(prefs);
+      m.remove(); draw();
+    };
+    document.body.append(m); focusModal(m);
+  };
+  const bindMetricUi = () => {
+    v.querySelectorAll('details.metric').forEach(d => {
+      d.ontoggle = () => { if (!u.metricDragging) u.metricOpen[d.dataset.k] = d.open; };
+      const handle = d.querySelector('.metric-drag');
+      if (handle) {
+        handle.onmousedown = e => { e.preventDefault(); d.draggable = true; };
+        handle.onclick = e => { e.preventDefault(); e.stopPropagation(); };
+      }
+      d.ondragstart = e => {
+        if (!d.draggable) { e.preventDefault(); return; }
+        u.metricDragging = true;
+        e.dataTransfer.setData('text/plain', d.dataset.k);
+        e.dataTransfer.effectAllowed = 'move';
+        d.classList.add('metric-dragging');
+      };
+      d.ondragend = () => { u.metricDragging = false; d.draggable = false; d.classList.remove('metric-dragging'); v.querySelectorAll('.metric-drop').forEach(x => x.classList.remove('metric-drop')); };
+      d.ondragover = e => {
+        e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+        d.classList.add('metric-drop');
+      };
+      d.ondragleave = () => d.classList.remove('metric-drop');
+      d.ondrop = e => {
+        e.preventDefault(); d.classList.remove('metric-drop');
+        const from = e.dataTransfer.getData('text/plain');
+        const to = d.dataset.k;
+        if (!from || from === to || !METRIC_KEYS.includes(from) || !METRIC_KEYS.includes(to)) return;
+        prefs = loadMetricPrefs();
+        const order2 = prefs.order.filter(k => k !== from);
+        const insertAt = order2.indexOf(to);
+        if (insertAt < 0) return;
+        order2.splice(insertAt, 0, from);
+        prefs.order = order2;
+        saveMetricPrefs(prefs);
+        u.metricDragging = false;
+        draw();
+      };
+    });
+    const cust = v.querySelector('#metricCust');
+    if (cust) cust.onclick = () => customizeMetrics();
+  };
   const draw = () => {
+    if (u.metricDragging) return;
     const x = u.stats; if (!x) { v.innerHTML = '<p class="muted">Loading stats…</p>'; return; }
+    prefs = loadMetricPrefs();
     const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
     const bar = p => `<div class="bar ${p > 90 ? 'crit' : p > 75 ? 'warn' : ''}"><i style="width:${p}%"></i></div>`;
     const mp = pct(x.memUsed, x.memTotal);
     const sp = pct(x.swapUsed, x.swapTotal);
-    const open = k => u.metricOpen[k] !== false ? 'open' : '';
     const since = u.statsSince ? fmtUp(Math.max(1, (Date.now() - u.statsSince) / 1000)) : '–';
-    v.innerHTML = `<div class="row small" style="margin-bottom:10px"><span class="muted">Metrics while this connection has been open · ${esc(since)}</span><span class="spacer"></span><span class="muted">${(u.statsHist || []).length} samples</span></div>
-    <div class="metric-cols">
-      <div class="metric-col">
-        <details class="card metric" data-k="cpu" ${open('cpu')}><summary><div class="grow"><div class="card-title">CPU <span class="muted">${x.cores || '?'} cores${x.temp != null ? ' · ' + Math.round(x.temp) + '°C' : ''}</span></div><div class="stat-big">${x.cpu == null ? '…' : x.cpu.toFixed(1) + '%'}</div>${bar(x.cpu || 0)}</div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('cpu', '%', 'var(--accent)')}${x.temp != null ? histBlock('temp', '°C', '#fb7185') : ''}</details>
-        <details class="card metric" data-k="load" ${open('load')}><summary><div class="grow"><div class="card-title">Load average</div><div class="stat-big">${x.load ? x.load[0].toFixed(2) : '–'}</div><p class="muted small">${x.load ? x.load.map(n => n.toFixed(2)).join(' · ') : '–'} <span class="muted">(1 · 5 · 15 min)</span></p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('load', '', '#2dd4bf')}</details>
-        ${x.gpu ? `<details class="card metric" data-k="gpu" ${open('gpu')}><summary><div class="grow"><div class="card-title">GPU <span class="muted ellipsis">${esc(x.gpu.name || '')}</span></div><div class="stat-big">${x.gpu.util == null ? '…' : Math.round(x.gpu.util) + '%'}</div>${bar(x.gpu.util || 0)}<p class="muted small">${x.gpu.memTotal ? fmtB(x.gpu.memUsed) + ' of ' + fmtB(x.gpu.memTotal) + ' VRAM' : 'VRAM n/a'}${x.gpu.temp != null ? ' · ' + Math.round(x.gpu.temp) + '°C' : ''}${x.gpu.count > 1 ? ' · ' + x.gpu.count + ' GPUs' : ''}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('gpu', '%', '#a78bfa')}${x.gpu.memTotal ? histBlock('gpuMem', '%', '#c4b5fd') : ''}</details>` : ''}
-      </div>
-      <div class="metric-col">
-        <details class="card metric" data-k="mem" ${open('mem')}><summary><div class="grow"><div class="card-title">Memory</div><div class="stat-big">${mp}%</div>${bar(mp)}<p class="muted small">${fmtB(x.memUsed)} of ${fmtB(x.memTotal)}${x.swapTotal ? ' · swap ' + fmtB(x.swapUsed) + (sp ? ' · ' + sp + '%' : '') : ''}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('mem', '%', 'var(--ok)')}${x.swapTotal ? histBlock('swap', '%', 'var(--warn)') : ''}</details>
-        <details class="card metric" data-k="net" ${open('net')}><summary><div class="grow"><div class="card-title">Network I/O <span class="muted">${esc((x.net && x.net.ifaces || []).slice(0, 2).join(', ') || '')}</span></div><div class="stat-big">${x.net && x.net.rx != null ? fmtRate(x.net.rx) : '…'}</div><p class="muted small">↓ ${x.net && x.net.rx != null ? fmtRate(x.net.rx) : '–'} · ↑ ${x.net && x.net.tx != null ? fmtRate(x.net.tx) : '–'}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('netRx', 'B/s', '#38bdf8')}${histBlock('netTx', 'B/s', '#818cf8')}</details>
-        <details class="card metric" data-k="diskio" ${open('diskio')}><summary><div class="grow"><div class="card-title">Disk I/O <span class="muted">${esc((x.diskIO && x.diskIO.disks || []).slice(0, 3).join(', ') || '')}</span></div><div class="stat-big">${x.diskIO && x.diskIO.read != null ? fmtRate(x.diskIO.read) : '…'}</div><p class="muted small">Read ${x.diskIO && x.diskIO.read != null ? fmtRate(x.diskIO.read) : '–'} · Write ${x.diskIO && x.diskIO.write != null ? fmtRate(x.diskIO.write) : '–'}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('diskR', 'B/s', '#34d399')}${histBlock('diskW', 'B/s', '#fbbf24')}</details>
-        <details class="card metric" data-k="uptime" ${open('uptime')}><summary><div class="grow"><div class="card-title">Uptime & host</div><div class="stat-big">${fmtUp(x.uptime)}</div><p class="muted small ellipsis">${esc(x.hostname)} · ${esc(x.os)}</p></div><span class="metric-chev" aria-hidden="true"></span></summary><div class="metric-hist"><p class="small muted">Server uptime is from the host, not this app session. Expand the other cards for charts over the time this connection has been open.</p></div></details>
-      </div>
-    </div>
-    <details class="card metric" data-k="uiable" ${open('uiable')} style="margin-top:12px"><summary><div class="grow"><div class="card-title">Uiable</div><p class="small" style="margin:4px 0 0">${u.uiable?.reachable ? `Dashboard is running on the server (port ${u.uiable.port}). Use <b>Open Uiable dashboard</b> above.` : (u.uiable?.installed || u.uiable?.isUiable) ? `Uiable ${esc(u.uiable.version || '')} is installed under /opt/uiable but not responding on the server — start it (or use Update) then Open dashboard.`.trim() : 'Not found on this server. Terminal, Files and Forwards still work over plain SSH.'}</p></div><span class="metric-chev" aria-hidden="true"></span></summary><div class="metric-hist"><p class="small muted">Uiable status is checked when you open this connection. Use the header button to open or install.</p></div></details>
-    <details class="card metric" data-k="storage" ${open('storage')} style="margin-top:12px"><summary><div class="grow"><div class="card-title">Storage</div>${(x.disks || []).slice(0, 2).map(d => { const p = pct(d.used, d.size); return `<div style="margin-top:8px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted small" style="margin-top:6px">No disks reported</p>'}</div><span class="metric-chev" aria-hidden="true"></span></summary>
-      <div class="metric-hist">${(x.disks || []).map(d => { const p = pct(d.used, d.size); return `<div style="margin-bottom:12px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${fmtB(d.used)} / ${fmtB(d.size)} · ${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted">No disks reported</p>'}</div>
-    </details>`;
-    v.querySelectorAll('details.metric').forEach(d => {
-      d.ontoggle = () => { u.metricOpen[d.dataset.k] = d.open; };
-    });
+    const cards = {
+      cpu: () => wrapCard('cpu', `${sumHead(`<div class="card-title">CPU <span class="muted">${x.cores || '?'} cores${x.temp != null ? ' · ' + Math.round(x.temp) + '°C' : ''}</span></div><div class="stat-big">${x.cpu == null ? '…' : x.cpu.toFixed(1) + '%'}</div>${bar(x.cpu || 0)}`)}${histBlock('cpu', '%', 'var(--accent)')}${x.temp != null ? histBlock('temp', '°C', '#fb7185') : ''}`),
+      load: () => wrapCard('load', `${sumHead(`<div class="card-title">Load average</div><div class="stat-big">${x.load ? x.load[0].toFixed(2) : '–'}</div><p class="muted small metric-extra">${x.load ? x.load.map(n => n.toFixed(2)).join(' · ') : '–'} <span class="muted">(1 · 5 · 15 min)</span></p>`)}${histBlock('load', '', '#2dd4bf')}`),
+      mem: () => wrapCard('mem', `${sumHead(`<div class="card-title">Memory</div><div class="stat-big">${mp}%</div>${bar(mp)}<p class="muted small metric-extra">${fmtB(x.memUsed)} of ${fmtB(x.memTotal)}${x.swapTotal ? ' · swap ' + fmtB(x.swapUsed) + (sp ? ' · ' + sp + '%' : '') : ''}</p>`)}${histBlock('mem', '%', 'var(--ok)')}${x.swapTotal ? histBlock('swap', '%', 'var(--warn)') : ''}`),
+      net: () => wrapCard('net', `${sumHead(`<div class="card-title">Network I/O <span class="muted metric-extra">${esc((x.net && x.net.ifaces || []).slice(0, 2).join(', ') || '')}</span></div><div class="stat-big">${x.net && x.net.rx != null ? fmtRate(x.net.rx) : '…'}</div><p class="muted small metric-extra">↓ ${x.net && x.net.rx != null ? fmtRate(x.net.rx) : '–'} · ↑ ${x.net && x.net.tx != null ? fmtRate(x.net.tx) : '–'}</p>`)}${histBlock('netRx', 'B/s', '#38bdf8')}${histBlock('netTx', 'B/s', '#818cf8')}`),
+      diskio: () => wrapCard('diskio', `${sumHead(`<div class="card-title">Disk I/O <span class="muted metric-extra">${esc((x.diskIO && x.diskIO.disks || []).slice(0, 3).join(', ') || '')}</span></div><div class="stat-big">${x.diskIO && x.diskIO.read != null ? fmtRate(x.diskIO.read) : '…'}</div><p class="muted small metric-extra">Read ${x.diskIO && x.diskIO.read != null ? fmtRate(x.diskIO.read) : '–'} · Write ${x.diskIO && x.diskIO.write != null ? fmtRate(x.diskIO.write) : '–'}</p>`)}${histBlock('diskR', 'B/s', '#34d399')}${histBlock('diskW', 'B/s', '#fbbf24')}`),
+      gpu: () => x.gpu ? wrapCard('gpu', `${sumHead(`<div class="card-title">GPU <span class="muted ellipsis metric-extra">${esc(x.gpu.name || '')}</span></div><div class="stat-big">${x.gpu.util == null ? '…' : Math.round(x.gpu.util) + '%'}</div>${bar(x.gpu.util || 0)}<p class="muted small metric-extra">${x.gpu.memTotal ? fmtB(x.gpu.memUsed) + ' of ' + fmtB(x.gpu.memTotal) + ' VRAM' : 'VRAM n/a'}${x.gpu.temp != null ? ' · ' + Math.round(x.gpu.temp) + '°C' : ''}${x.gpu.count > 1 ? ' · ' + x.gpu.count + ' GPUs' : ''}</p>`)}${histBlock('gpu', '%', '#a78bfa')}${x.gpu.memTotal ? histBlock('gpuMem', '%', '#c4b5fd') : ''}`) : '',
+      uptime: () => wrapCard('uptime', `${sumHead(`<div class="card-title">Uptime & host</div><div class="stat-big">${fmtUp(x.uptime)}</div><p class="muted small ellipsis metric-extra">${esc(x.hostname)} · ${esc(x.os)}</p>`)}<div class="metric-hist"><p class="small muted">Server uptime is from the host, not this app session. Expand the other cards for charts over the time this connection has been open.</p></div>`),
+      uiable: () => wrapCard('uiable', `${sumHead(`<div class="card-title">Uiable</div><p class="small" style="margin:4px 0 0">${u.uiable?.reachable ? `Dashboard is running on the server (port ${u.uiable.port}). Use <b>Open Uiable dashboard</b> above.` : (u.uiable?.installed || u.uiable?.isUiable) ? `Uiable ${esc(u.uiable.version || '')} is installed under /opt/uiable but not responding on the server — start it (or use Update) then Open dashboard.`.trim() : 'Not found on this server. Terminal, Files and Forwards still work over plain SSH.'}</p>`)}<div class="metric-hist"><p class="small muted">Uiable status is checked when you open this connection. Use the header button to open or install.</p></div>`),
+      storage: () => wrapCard('storage', `${sumHead(`<div class="card-title">Storage</div>${(x.disks || []).slice(0, 2).map(d => { const p = pct(d.used, d.size); return `<div class="metric-extra" style="margin-top:8px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted small metric-extra" style="margin-top:6px">No disks reported</p>'}`)}<div class="metric-hist">${(x.disks || []).map(d => { const p = pct(d.used, d.size); return `<div style="margin-bottom:12px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${fmtB(d.used)} / ${fmtB(d.size)} · ${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted">No disks reported</p>'}</div>`),
+    };
+    const gridHtml = prefs.order.filter(k => !prefs.hidden.includes(k)).map(k => (cards[k] && cards[k]()) || '').filter(Boolean).join('');
+    v.innerHTML = `<div class="row small metric-toolbar"><span class="muted">Metrics while this connection has been open · ${esc(since)}</span><span class="spacer"></span><span class="muted">${(u.statsHist || []).length} samples</span><button type="button" class="sm" id="metricCust" title="Reorder, resize, or hide metrics">Customize</button></div>
+    <div class="metric-cols">${gridHtml}</div>`;
+    bindMetricUi();
   };
   const tick = async () => { if (!anyPane(s.id, 'overview')) return; if (!u.statsBusy) { u.statsBusy = true; try { onStats(s, await uc.call('stats', s.id)); } catch {} u.statsBusy = false; } if (anyPane(s.id, 'overview')) { draw(); statsTimer = setTimeout(tick, document.hidden ? 15000 : 3000); } };
   draw(); tick();
