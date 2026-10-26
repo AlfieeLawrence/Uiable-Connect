@@ -36,3 +36,8 @@ On **iOS**, forwards pause while the app is in the background — keep Connect o
 ## Related
 
 [Install Uiable](install-uiable.md) · [Getting started](getting-started.md)
+
+## Uiable dashboard
+
+Opening Uiable from the overview or the **Uiable** tab reuses the same SSH port-forward id (`uiable`). **open** on a forward row still launches your system browser; the Uiable tab can embed or detach instead.
+

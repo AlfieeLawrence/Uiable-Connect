@@ -29,3 +29,8 @@ Installing [Uiable](install-uiable.md) from Connect can install Docker first whe
 ## Related
 
 [Terminal](terminal.md) · [Health & alerts](health-alerts.md)
+
+## Root Docker via terminal Use sudo
+
+If `docker` on the server requires sudo (user not in the `docker` group), tick **Use sudo** on the Terminal tab before opening a Docker shell. New tabs run as root with the saved sudo password, so `docker ps` / `docker exec` work without typing sudo each time.
+

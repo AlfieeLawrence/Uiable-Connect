@@ -2,7 +2,7 @@
 // Uiable Connect for Docker: serves the same UI (../src) as a web app and implements the window.uc channels over
 // HTTP (POST /api/call, /api/send) + Server-Sent Events (/api/events), backed by lib/core.js (ssh2). No extra deps.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), os = require('os');
-const { makeSession, testConnection, testSudo, sudoExec, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame } = require('../lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame, sudoRemove } = require('../lib/core');
 const net = require('net');
 const { Store } = require('../lib/store');
 const { History } = require('../lib/history');
@@ -104,9 +104,10 @@ const H = {
   'history:clear': () => hist.clear(),
   'history:get': () => store.setting('history', true),
   'history:set': v => store.setSetting('history', !!v),
-  'shell:open': (id, sid, c, r) => { log(id, 'shell'); return S(id).openShell(sid, c, r); },
+  'shell:open': async (id, sid, c, r, sudo) => { log(id, sudo ? 'shell-sudo' : 'shell'); if (!sudo) return S(id).openShell(sid, c, r);
+    const srv = store.full(id); return S(id).openShell(sid, c, r, { sudo: true, password: srv.sudoPassword || srv.password || null }); },
   'fs:home': id => S(id).home(), 'fs:list': async (id, p, sudo) => { if (!sudo) return S(id).list(p); const srv = store.full(id); return sudoList(S(id), p, srv.sudoPassword || srv.password || null); }, 'fs:mkdir': (id, p) => S(id).mkdir(p),
-  'fs:rename': (id, a, b) => S(id).rename(a, b), 'fs:remove': (id, p) => { log(id, 'remove', p); return S(id).remove(p); },
+  'fs:rename': (id, a, b) => S(id).rename(a, b), 'fs:remove': async (id, p, sudo) => { log(id, sudo ? 'remove-sudo' : 'remove', p); if (!sudo) return S(id).remove(p); const srv = store.full(id); return sudoRemove(S(id), p, srv.sudoPassword || srv.password || null); },
   'fs:read': async (id, p, sudo) => { if (!sudo) return S(id).readText(p); const srv = store.full(id); return sudoReadText(S(id), p, srv.sudoPassword || srv.password || null); }, 'fs:write': async (id, p, t, sudo) => { if (!sudo) return S(id).writeText(p, t); log(id, 'write-sudo', p); const srv = store.full(id); return sudoWriteText(S(id), p, t, srv.sudoPassword || srv.password || null); },
   'fs:copy': async (id, src, toId, dstDir, cx, sudo) => { if (toId === id) { if (sudo) { const srv = store.full(id); return sudoCopySame(S(id), String(src), String(dstDir), srv.sudoPassword || srv.password || null); } const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
     log(id, 'copy', `${src} -> ${toId}:${dstDir}`); const ab = { dead: false }; if (cx) copies.set(cx, ab);

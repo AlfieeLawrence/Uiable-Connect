@@ -38,7 +38,7 @@ Right-click the app → **Open** can also help the first time.
 
 ## Run from source / build yourself
 
-On a Mac with Node.js 20+:
+On a Mac with Node.js 26+:
 
 ```sh
 npm install

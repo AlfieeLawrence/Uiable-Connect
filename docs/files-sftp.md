@@ -24,6 +24,7 @@ SFTP runs as your SSH user. Paths only root can touch (for example under `/etc`)
 1. Save a **sudo password** on the connection (Edit connection → optional sudo password), or enter one when prompted the first time you use sudo in Files.  
 2. Tick **Use sudo** in the Files toolbar. List, open/view, upload, and same-server copy then run via sudo using that saved password (login password is used as a fallback if no dedicated sudo password is set).  
 3. In the editor, open **Save ▾** and choose **Save as sudo** to write the file as root.
+4. **Delete**, list, open, upload, and same-server copy also honour **Use sudo** (one error toast if permission is still denied).
 
 The sudo password is never put on the command line and is never written to History. Prefer a dedicated sudo password over reusing the login password when you can.
 

@@ -37,7 +37,7 @@ Run `Uiable-Connect-Setup-x.y.z.exe`, choose an install folder, and finish. Use 
 
 ## Run from source
 
-1. Install [Node.js 20 LTS](https://nodejs.org/) or newer  
+1. Install [Node.js 26 LTS](https://nodejs.org/) or newer  
 2. In the repo folder: `npm install` then `npm start`  
 3. Optional local build: `npm run dist` (output in `dist\`) or double-click `build-windows.bat`
 

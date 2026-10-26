@@ -23,7 +23,7 @@ The **`android-release-unsigned.apk`** asset must be **signed** before install; 
 
 ## Build from source
 
-With Node.js 20+, JDK 17, and the Android SDK (Android Studio is enough):
+With Node.js 26+, JDK 17, and the Android SDK (Android Studio is enough):
 
 ```bat
 REM Windows

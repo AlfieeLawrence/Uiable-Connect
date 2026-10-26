@@ -39,3 +39,15 @@ When Uiable listens on localhost only, open it with **Open Uiable dashboard** so
 ## Related
 
 [Port forwards](port-forwards.md) · [Connections](connections.md) · [Uiable docs](https://github.com/AlfieeLawrence/uiable/tree/main/docs) · [Uiable on GitHub](https://github.com/AlfieeLawrence/uiable)
+
+## Uiable tab in Connect
+
+When Connect detects Uiable on an SSH server (reachable dashboard or installed files), an **Uiable** tab appears next to **History**.
+
+- **Open here** — embeds the dashboard in the tab over an SSH tunnel (same forward id as Open Uiable dashboard).
+- **Detach** / **Open in window** — opens in a Connect BrowserWindow.
+- **System browser** — opens in your default OS browser.
+- On **Ports**, **open** still uses the system browser (unchanged).
+
+If the tab shows “not responding”, start Uiable on the server and use **Re-check**.
+

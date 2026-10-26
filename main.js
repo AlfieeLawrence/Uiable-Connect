@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu, Notificat
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame } = require('./lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame, sudoRemove } = require('./lib/core');
 const os = require('os');
 const net = require('net');
 const { Store } = require('./lib/store');
@@ -141,8 +141,10 @@ h('uiable:open', async (id, mode, port) => {
   const saved = (srv.forwards || []).find(x => x.id === 'uiable') || {};
   const f = { id: 'uiable', localPort: saved.localPort || 8080, remoteHost: '127.0.0.1', remotePort: Number(port) || saved.remotePort || 8080 };
   await s.startForward(f);
-  const url = `http://localhost:${f.localPort}/`;
+  const url = `http://127.0.0.1:${f.localPort}/`;
   await waitHttp(f.localPort); // warm the tunnel so nothing ever loads an error page
+  // embed/tunnel: only ensure the forward — UI iframes this URL. browser: system default. else: detach BrowserWindow.
+  if (mode === 'embed' || mode === 'tunnel') return url;
   if (mode === 'browser') { shell.openExternal(url); return url; }
   const w0 = uiWins.get(id); if (w0 && !w0.isDestroyed()) { w0.focus(); return url; }
   if (uiBusy) return url; uiBusy = true;
@@ -210,7 +212,8 @@ h('history:list', n => hist ? hist.list(Math.min(Number(n) || 300, 2000)) : []);
 h('history:clear', () => hist && hist.clear());
 h('history:get', () => store.setting('history', true));
 h('history:set', v => store.setSetting('history', !!v));
-h('shell:open', (id, sid, c, r) => { log(id, 'shell'); return S(id).openShell(sid, c, r); });
+h('shell:open', async (id, sid, c, r, sudo) => { log(id, sudo ? 'shell-sudo' : 'shell'); if (!sudo) return S(id).openShell(sid, c, r);
+  const srv = store.full(id); return S(id).openShell(sid, c, r, { sudo: true, password: srv.sudoPassword || srv.password || null }); });
 ipcMain.on('shell:write', (_e, id, sid, d) => sessions.get(id)?.shellWrite(sid, d));
 ipcMain.on('shell:resize', (_e, id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r));
 ipcMain.on('shell:close', (_e, id, sid) => sessions.get(id)?.shellClose(sid));
@@ -218,7 +221,7 @@ h('fs:home', id => S(id).home());
 h('fs:list', async (id, p, sudo) => { if (!sudo) return S(id).list(p); const srv = store.full(id); return sudoList(S(id), p, srv.sudoPassword || srv.password || null); });
 h('fs:mkdir', (id, p) => S(id).mkdir(p));
 h('fs:rename', (id, a, b) => S(id).rename(a, b));
-h('fs:remove', (id, p) => { log(id, 'remove', p); return S(id).remove(p); });
+h('fs:remove', async (id, p, sudo) => { log(id, sudo ? 'remove-sudo' : 'remove', p); if (!sudo) return S(id).remove(p); const srv = store.full(id); return sudoRemove(S(id), p, srv.sudoPassword || srv.password || null); });
 h('fs:read', async (id, p, sudo) => { if (!sudo) return S(id).readText(p); const srv = store.full(id); return sudoReadText(S(id), p, srv.sudoPassword || srv.password || null); });
 h('fs:write', async (id, p, t, sudo) => { if (!sudo) return S(id).writeText(p, t); log(id, 'write-sudo', p); const srv = store.full(id); return sudoWriteText(S(id), p, t, srv.sudoPassword || srv.password || null); });
 const copies = new Map(); // cx -> { dead }

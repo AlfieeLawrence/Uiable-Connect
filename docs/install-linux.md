@@ -59,7 +59,7 @@ npm install
 npm start
 ```
 
-Requires Node.js 20+. This is the full desktop shell (including serial ports), not the browser container.
+Requires Node.js 26+. This is the full desktop shell (including serial ports), not the browser container.
 
 ## Next
 

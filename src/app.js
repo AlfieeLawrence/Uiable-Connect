@@ -13,7 +13,8 @@ function toast(msg, err) {
   $('#toasts').append(t);
   t._timer = setTimeout(kill, err ? 9000 : 4500);
 }
-const call = (...a) => uc.call(...a).catch(e => { toast(e.message, true); throw e; });
+const call = (...a) => uc.call(...a).catch(e => { try { e._toasted = true; } catch {} toast(e.message, true); throw e; });
+const quietCall = (...a) => uc.call(...a); // no auto-toast — caller shows one message
 
 /** Bring the Electron window forward and focus the first field in a modal (xterm steals focus otherwise). */
 function focusModal(m) {
@@ -38,7 +39,17 @@ const cur = () => panes[focusPane] && panes[focusPane].srv;
 const curSrv = () => servers.find(s => s.id === cur());
 const anyPane = (id, tab) => panes.some(p => p.srv === id && p.tab === tab);
 const isSsh = s => !s || !s.connType || s.connType === 'ssh';
-const TABS = s => isSsh(s) ? ['overview', 'terminal', 'files', 'forwards', 'health', 'alerts', 'history'] : ['terminal', 'history'];
+const hasUiableTab = s => {
+  if (!s || !isSsh(s)) return false;
+  const ui = S(s.id).uiable;
+  return !!(ui && (ui.reachable || ui.installed || ui.isUiable || ui.filesVersion));
+};
+const TABS = s => {
+  if (!isSsh(s)) return ['terminal', 'history'];
+  const tabs = ['overview', 'terminal', 'files', 'forwards', 'health', 'alerts', 'history'];
+  if (hasUiableTab(s)) tabs.push('uiable'); // next to History
+  return tabs;
+};
 const connLabel = s => s.connType === 'serial' ? `serial ${esc(s.serialPath)} @ ${s.baudRate || 115200}` : s.connType === 'telnet' ? `telnet ${esc(s.host)}:${s.port}` : `${esc(s.username)}@${esc(s.host)}:${s.port}`;
 
 async function refresh() { servers = await uc.call('servers:list');
@@ -102,7 +113,7 @@ function ctxMenu(x, y, items) {
     if (it === '---' || it[0] === '---') { m.append(el('<div class="ctx-sep" role="separator"></div>')); continue; }
     const [label, fn, off] = it;
     const b = el(`<button type="button" ${off ? 'disabled' : ''}>${label}</button>`);
-    b.onclick = () => { m.remove(); Promise.resolve(fn && fn()).catch(e => toast(e.message || 'Clipboard not available', true)); };
+    b.onclick = () => { m.remove(); Promise.resolve(fn && fn()).catch(e => { if (e && e._toasted) return; toast(e.message || 'Clipboard not available', true); }); };
     m.append(b);
   }
   document.body.append(m);
@@ -153,19 +164,24 @@ function onStats(s, x) {
   for (const m of evalAlerts(s, x)) raiseAlert(s, m);
 }
 function sparkline(vals, w = 160, h = 40, stroke = 'var(--accent)') {
+  // Use a wide logical width so CSS width:100% scales the whole chart evenly —
+  // preserveAspectRatio=none made strokes look thicker/stretched on wide cards.
+  const W = Math.max(220, w);
+  const H = h;
   const pts = [];
   let min = Infinity, max = -Infinity;
   for (const v of vals) { if (v == null || isNaN(v)) continue; if (v < min) min = v; if (v > max) max = v; }
-  if (!isFinite(min)) return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"></svg>`;
+  if (!isFinite(min)) return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"></svg>`;
   if (max <= min) max = min + 1;
   vals.forEach((v, i) => {
     if (v == null || isNaN(v)) return;
-    const x = 1 + (i / Math.max(1, vals.length - 1)) * (w - 2);
-    const y = h - 2 - ((v - min) / (max - min)) * (h - 4);
+    const x = 1 + (i / Math.max(1, vals.length - 1)) * (W - 2);
+    const y = H - 2 - ((v - min) / (max - min)) * (H - 4);
     pts.push(x.toFixed(1) + ',' + y.toFixed(1));
   });
-  if (pts.length < 2) return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"></svg>`;
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="${stroke}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" points="${pts.join(' ')}"/></svg>`;
+  if (pts.length < 2) return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"></svg>`;
+  // vector-effect keeps stroke width in screen px so lines don't fatten when the SVG stretches horizontally
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" points="${pts.join(' ')}"/></svg>`;
 }
 function histStats(vals) {
   const nums = vals.filter(v => v != null && !isNaN(v));
@@ -201,7 +217,7 @@ function renderPane(sec, p, i) {
     ${panes.length > 1 ? '<button class="sm" id="pclose" title="Close this pane">✕</button>' : ''}
     ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side">⿻</button>' : ''}
     <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : `${s.mac ? '<button class="sm" id="wake" title="Send a Wake-on-LAN packet">⚡ Wake</button>' : ''}<button class="primary sm" id="conn">Connect</button>`}</div>
-    <div class="tabs"><div class="seg">${tabs.map(t => { const short = ({ overview:'Home', terminal:'Term', files:'Files', forwards:'Ports', health:'Health', alerts:'Alerts', history:'Hist' }[t] || t);
+    <div class="tabs"><div class="seg">${tabs.map(t => { const short = ({ overview:'Home', terminal:'Term', files:'Files', forwards:'Ports', health:'Health', alerts:'Alerts', history:'Hist', uiable:'Uiable' }[t] || t);
     const label = ON_MOBILE ? short : (t[0].toUpperCase() + t.slice(1));
     const icon = ON_MOBILE ? ({
       overview: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>',
@@ -211,6 +227,7 @@ function renderPane(sec, p, i) {
       health: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h3.5l2-5 3 10 2.5-5H21"/></svg>',
       alerts: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17h12l-1.2-2.2a6.2 6.2 0 0 1-1.3-3.7V9a4.5 4.5 0 1 0-9 0v2.1c0 1.3-.45 2.6-1.3 3.7L6 17zm4.2 1.2a2 2 0 0 0 3.6 0"/></svg>',
       history: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3.2 2"/></svg>',
+      uiable: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7 9.5h10M7 12.5h7"/></svg>',
     }[t] || '') : '';
     return `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}" title="${t}">${icon}<span class="tlab">${label}</span></button>`; }).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
     <div class="view" id="view"></div>`;
@@ -222,7 +239,7 @@ function renderPane(sec, p, i) {
   const pc = $('#pclose', sec); if (pc) pc.onclick = () => { panes.splice(i, 1); if (!panes.length) panes = [{ srv: null, tab: 'overview' }]; focusPane = Math.max(0, i - 1); renderSide(); renderMain(); };
   sec.querySelectorAll('.tabs button[data-t]').forEach(b => b.onclick = () => { p.tab = b.dataset.t; renderMain(); });
   uiPill(sec, s, u);
-  ({ overview: vOverview, terminal: vTerminal, files: vFiles, forwards: vForwards, health: vHealth, alerts: vAlerts, history: vHistory })[p.tab](s, u, $('#view', sec), sec);
+  ({ overview: vOverview, terminal: vTerminal, files: vFiles, forwards: vForwards, health: vHealth, alerts: vAlerts, history: vHistory, uiable: vUiable })[p.tab](s, u, $('#view', sec), sec);
 }
 const notConn = s => `<div class="empty"><div><p class="muted">This connection is offline.</p><button class="primary" data-act="connect" data-id="${s.id}">Connect</button></div></div>`;
 
@@ -278,9 +295,56 @@ function uiPill(sec, s, u) {
   p.insertAdjacentHTML('beforeend', ' <span id="uiInst"></span>'); uiInstallButton(s, u, p);
   if ($('#openUi', p)) { $('#openUi', p).onclick = () => openUi(s.id, 'window'); $('#openUiB', p).onclick = () => openUi(s.id, 'browser'); }
 }
-async function openUi(id, mode) { const u = S(id); if (u.uiOpening) return; u.uiOpening = true;
-  try { const url = await call('uiable:open', id, mode, u.uiable && u.uiable.port); toast('Tunnel up: ' + url); refresh(); }
-  finally { u.uiOpening = false; } }
+async function openUi(id, mode) { const u = S(id); if (u.uiOpening) return null; u.uiOpening = true;
+  try {
+    const url = await call('uiable:open', id, mode || 'window', u.uiable && u.uiable.port);
+    u.uiableUrl = typeof url === 'string' ? url : (url && url.url) || u.uiableUrl;
+    if (mode !== 'embed' && mode !== 'tunnel') toast('Tunnel up: ' + (u.uiableUrl || url));
+    if (mode !== 'embed' && mode !== 'tunnel') refresh();
+    return u.uiableUrl || url;
+  } finally { u.uiOpening = false; } }
+
+/** Uiable dashboard tab: embed via SSH tunnel; detach/window = app BrowserWindow; browser = system default. */
+async function vUiable(s, u, v) {
+  if (!s.connected) { v.innerHTML = notConn(s); return; }
+  const ui = u.uiable || {};
+  const ver = ui.version ? ' ' + esc(ui.version) : '';
+  const bar = (extra = '') => `<div class="uiable-bar row"><b>Uiable dashboard${ver}</b><span class="muted small">${ui.reachable ? 'on :' + esc(ui.port) : (ui.installed || ui.isUiable ? 'installed · not running' : 'not detected')}</span><span class="spacer"></span>${extra}</div>`;
+  if (!ui.reachable) {
+    v.innerHTML = `<div class="uiable-view">${bar('<button class="sm" id="uiRedetect">Re-check</button>')}<div class="empty"><div><p class="muted">${ui.installed || ui.isUiable || ui.filesVersion ? 'Uiable is installed but not responding. Start it on the server, then Re-check.' : 'Uiable was not found on this server.'}</p></div></div></div>`;
+    $('#uiRedetect', v).onclick = async () => { u.uiable = null; u._uiDetecting = false; renderMain(); };
+    return;
+  }
+  v.innerHTML = `<div class="uiable-view">${bar(`
+      <button class="sm" id="uiReload" title="Reload dashboard">⟳</button>
+      <button class="sm primary" id="uiEmbed" title="Load dashboard in this tab">Open here</button>
+      <button class="sm" id="uiDetach" title="Open in a new Connect window">Detach</button>
+      <button class="sm" id="uiWeb" title="Open in an in-app browser window">Open in window</button>
+      <button class="sm" id="uiBrowser" title="Open in your default system browser">System browser</button>
+    `)}<div class="uiable-frame-wrap"><div class="uiable-loading muted small" id="uiLoad">Starting tunnel…</div><iframe class="uiable-frame hidden" id="uiFrame" title="Uiable dashboard" allow="fullscreen"></iframe></div>
+    <p class="muted small uiable-note">In-tab view uses the same SSH port forward as <b>Open Uiable dashboard</b>. Ports → <b>open</b> still uses your system browser.</p></div>`;
+  const frame = $('#uiFrame', v), loadEl = $('#uiLoad', v);
+  const showUrl = (url) => {
+    u.uiableUrl = url;
+    loadEl.classList.add('hidden');
+    frame.classList.remove('hidden');
+    if (frame.getAttribute('src') !== url) frame.src = url;
+  };
+  const embed = async () => {
+    loadEl.classList.remove('hidden'); loadEl.textContent = 'Starting tunnel…';
+    frame.classList.add('hidden');
+    try {
+      const url = await openUi(s.id, 'embed');
+      if (url) showUrl(url); else loadEl.textContent = 'Could not start tunnel';
+    } catch (e) { loadEl.textContent = e.message || String(e); }
+  };
+  $('#uiReload', v).onclick = () => { if (u.uiableUrl) { frame.src = u.uiableUrl; } else embed(); };
+  $('#uiEmbed', v).onclick = () => embed();
+  $('#uiDetach', v).onclick = () => openUi(s.id, 'window');
+  $('#uiWeb', v).onclick = () => openUi(s.id, 'window');
+  $('#uiBrowser', v).onclick = () => openUi(s.id, 'browser');
+  await embed();
+}
 
 // ---------- Overview / stats
 function vOverview(s, u, v) {
@@ -493,40 +557,143 @@ const TERM_THEMES = {
 const termTheme = () => TERM_THEMES[localStorage.getItem('uc.ttheme') || 'dark'] || TERM_THEMES.dark;
 function vTerminal(s, u, v) {
   if (!s.connected) { v.innerHTML = notConn(s); return; }
-  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT" title="New tab (Ctrl+T)">+ Tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button><button class="sm" id="dockT" title="Open a shell inside a running Docker container on the server">◫ Docker</button>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button><span class="spacer"></span><button class="sm" id="findB" title="Search in the terminal (Ctrl+F)">🔍</button></div>
-    <div class="termhost" id="th"></div>
+  const MAX_TERM_TABS = 12;
+  const TERM_TAB_WARN = 10;
+  u.termSplit = !!u.termSplit && !ON_MOBILE;
+  u.termUseSudo = !!u.termUseSudo;
+  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT" title="New tab (Ctrl+T) · max ${MAX_TERM_TABS}">+ Tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button><button class="sm" id="dockT" title="Open a shell inside a running Docker container on the server">◫ Docker</button><label class="row small term-sudo" style="gap:6px;margin:0" title="New tabs open a root shell using the saved sudo password"><input type="checkbox" id="termSudo"> Use sudo</label>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button>${!ON_MOBILE ? '<button class="sm" id="termSplit" title="Show two terminals side by side">⇄ Split</button>' : ''}<span class="spacer"></span><span class="muted small" id="tabHint"></span><button class="sm" id="findB" title="Search in the terminal (Ctrl+F)">🔍</button></div>
+    <div class="termhosts ${u.termSplit ? 'split' : ''}" id="ths"><div class="termhost" id="th" data-side="a"></div><div class="termhost ${u.termSplit ? '' : 'hidden'}" id="th2" data-side="b"></div></div>
     <div class="findbar hidden" id="fb"><input id="fbi" placeholder="Find in terminal…"><button class="sm" id="fbp" title="Previous">↑</button><button class="sm" id="fbn" title="Next">↓</button><button class="sm" id="fbx">✕</button></div></div>`;
-  const draw = () => {
-    $('#ttabs').innerHTML = u.terms.map((t, i) => `<button class="${t.sid === u.activeTerm ? 'active' : ''}" data-s="${t.sid}">${t.label || 'Tab ' + (i + 1)} <span data-x="${t.sid}" style="opacity:.6">✕</span></button>`).join('');
-    $('#ttabs').querySelectorAll('button').forEach(b => b.onclick = (e) => { if (e.target.dataset.x) { uc.send('shell:close', s.id, e.target.dataset.x); return; } u.activeTerm = b.dataset.s; show(); });
+  const syncAddBtns = () => {
+    const full = u.terms.length >= MAX_TERM_TABS;
+    const hint = $('#tabHint', v);
+    if (hint) {
+      if (full) hint.textContent = `${u.terms.length}/${MAX_TERM_TABS} tabs (limit)`;
+      else if (u.terms.length >= TERM_TAB_WARN) hint.textContent = `${u.terms.length}/${MAX_TERM_TABS} tabs`;
+      else hint.textContent = '';
+    }
+    for (const id of ['newT', 'tmuxT', 'dockT']) {
+      const b = $('#' + id, v); if (!b) continue;
+      b.disabled = full;
+      b.classList.toggle('disabled', full);
+      b.title = full ? `Tab limit reached (${MAX_TERM_TABS}) — close one to open another` : b.getAttribute('data-title-base') || b.title;
+      if (!b.getAttribute('data-title-base')) b.setAttribute('data-title-base', b.title);
+    }
+    const sp = $('#termSplit', v); if (sp) sp.classList.toggle('active', !!u.termSplit);
   };
-  const show = () => { draw(); const h = $('#th'); [...h.children].forEach(c => c.style.display = 'none'); const t = u.terms.find(t => t.sid === u.activeTerm); if (!t) return;
-    if (t.node.parentNode !== h) h.append(t.node); t.node.style.display = ''; requestAnimationFrame(() => { t.fit.fit(); if (!document.querySelector(".modal-bg")) t.term.focus(); }); };
+  const draw = () => {
+    const a = u.activeTerm, b = u.activeTermB;
+    $('#ttabs').innerHTML = u.terms.map((t, i) => {
+      const on = t.sid === a || (u.termSplit && t.sid === b);
+      const mark = u.termSplit ? (t.sid === a ? '·L ' : t.sid === b ? '·R ' : '') : '';
+      const lab = t.label || ('Tab ' + (i + 1));
+      const sudoMark = t.sudo ? ' <span class="pill ok" style="padding:0 5px;font-size:10px">sudo</span>' : '';
+      return `<button class="${on ? 'active' : ''}" data-s="${t.sid}">${mark}${lab}${sudoMark} <span data-x="${t.sid}" style="opacity:.6">✕</span></button>`;
+    }).join('');
+    $('#ttabs').querySelectorAll('button').forEach(btn => btn.onclick = (e) => {
+      if (e.target.dataset.x) { uc.send('shell:close', s.id, e.target.dataset.x); return; }
+      const sid = btn.dataset.s;
+      if (u.termSplit && u.termFocus === 'b') {
+        if (sid === u.activeTerm) { /* swap */ u.activeTerm = u.activeTermB; u.activeTermB = sid; }
+        else u.activeTermB = sid;
+      } else {
+        if (u.termSplit && sid === u.activeTermB) { u.activeTermB = u.activeTerm; u.activeTerm = sid; }
+        else u.activeTerm = sid;
+      }
+      show();
+    });
+    syncAddBtns();
+  };
+  const place = (host, sid) => {
+    if (!host) return;
+    [...host.children].forEach(c => { c.style.display = 'none'; });
+    const t = u.terms.find(x => x.sid === sid); if (!t) return;
+    if (t.node.parentNode !== host) host.append(t.node);
+    t.node.style.display = '';
+    requestAnimationFrame(() => { try { t.fit.fit(); } catch {} });
+  };
+  const show = () => {
+    draw();
+    const th = $('#th', v), th2 = $('#th2', v);
+    if (u.termSplit) {
+      th2.classList.remove('hidden');
+      if (!u.activeTermB || u.activeTermB === u.activeTerm) {
+        const other = u.terms.find(t => t.sid !== u.activeTerm);
+        u.activeTermB = other ? other.sid : u.activeTerm;
+      }
+      place(th, u.activeTerm);
+      place(th2, u.activeTermB);
+      requestAnimationFrame(() => {
+        const ta = u.terms.find(t => t.sid === u.activeTerm);
+        const tb = u.terms.find(t => t.sid === u.activeTermB);
+        if (ta) try { ta.fit.fit(); } catch {}
+        if (tb) try { tb.fit.fit(); } catch {}
+        if (!document.querySelector('.modal-bg')) {
+          const focus = u.termFocus === 'b' ? tb : ta;
+          if (focus) focus.term.focus();
+        }
+      });
+    } else {
+      th2.classList.add('hidden');
+      // move all nodes under th for single view
+      for (const t of u.terms) if (t.node.parentNode !== th) th.append(t.node);
+      place(th, u.activeTerm);
+      requestAnimationFrame(() => {
+        const t = u.terms.find(x => x.sid === u.activeTerm);
+        if (t) { try { t.fit.fit(); } catch {} if (!document.querySelector('.modal-bg')) t.term.focus(); }
+      });
+    }
+  };
+  { const th = $('#th', v), th2 = $('#th2', v);
+    if (th) th.onpointerdown = () => { u.termFocus = 'a'; };
+    if (th2) th2.onpointerdown = () => { u.termFocus = 'b'; }; }
   const newT = async (runCmd, label) => {
+    if (u.terms.length >= MAX_TERM_TABS) {
+      toast(`Tab limit is ${MAX_TERM_TABS} — close one to open another`, true);
+      syncAddBtns();
+      return;
+    }
     const sid = 't' + Date.now() + Math.floor(Math.random() * 999); const node = document.createElement('div');
     const term = new Terminal({ fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: 14, cursorBlink: true, scrollback: 3000, theme: termTheme() });
     const fit = new FitAddon.FitAddon(); term.loadAddon(fit);
     const search = window.SearchAddon ? new SearchAddon.SearchAddon() : null; if (search) term.loadAddon(search);
-    $('#th').append(node); term.open(node); fit.fit();
+    $('#th', v).append(node); term.open(node); fit.fit();
     term.onData(d => uc.send('shell:write', s.id, sid, d));
     termClipboard(term, node);
     term.onResize(({ cols, rows }) => uc.send('shell:resize', s.id, sid, cols, rows));
-    u.terms.push({ sid, term, fit, search, node, label }); u.activeTerm = sid;
-    await call('shell:open', s.id, sid, term.cols, term.rows);
+    const asSudo = !!u.termUseSudo && isSsh(s);
+    if (asSudo) await ensureSudoForFiles(s.id);
+    u.terms.push({ sid, term, fit, search, node, label: label || (asSudo ? 'sudo' : label), sudo: asSudo });
+    if (u.termSplit && u.termFocus === 'b') u.activeTermB = sid; else u.activeTerm = sid;
+    await call('shell:open', s.id, sid, term.cols, term.rows, asSudo || undefined);
     if (runCmd) uc.send('shell:write', s.id, sid, runCmd.replace(/\r?\n/g, '\r') + '\r');
     show();
   };
-  // find bar: searches the active terminal via the search addon
+  // find bar: searches the focused terminal via the search addon
   const fb = $('#fb', v), fbi = $('#fbi', v);
-  const curSearch = () => u.terms.find(t => t.sid === u.activeTerm)?.search;
+  const curSearch = () => {
+    const sid = (u.termSplit && u.termFocus === 'b') ? u.activeTermB : u.activeTerm;
+    return u.terms.find(t => t.sid === sid)?.search;
+  };
   const find = dir => { const sa = curSearch(); if (sa && fbi.value) dir < 0 ? sa.findPrevious(fbi.value) : sa.findNext(fbi.value); };
   u.search = { open() { fb.classList.remove('hidden'); fbi.focus(); fbi.select(); }, close() { fb.classList.add('hidden'); curSearch()?.clearSelection(); } };
   $('#findB', v).onclick = () => fb.classList.contains('hidden') ? u.search.open() : u.search.close();
   $('#fbx', v).onclick = () => u.search.close();
   $('#fbn', v).onclick = () => find(1); $('#fbp', v).onclick = () => find(-1);
   fbi.oninput = () => find(1); fbi.onkeydown = e => { if (e.key === 'Enter') find(e.shiftKey ? -1 : 1); if (e.key === 'Escape') u.search.close(); };
-  $('#newT').onclick = () => newT(); u.newT = newT; u.redrawTerms = show;
-  const tm = $('#tmuxT'); if (tm) tm.onclick = () => newT('tmux new-session -A -s uiable || tmux new-session -s uiable', 'tmux');
+  $('#newT', v).onclick = () => newT(); u.newT = newT; u.redrawTerms = show;
+  const sudoCb = $('#termSudo', v);
+  if (sudoCb) {
+    sudoCb.checked = !!u.termUseSudo;
+    sudoCb.onchange = async () => {
+      u.termUseSudo = !!sudoCb.checked;
+      if (u.termUseSudo) {
+        try { await ensureSudoForFiles(s.id); toast('New tabs will open as root (Use sudo)'); }
+        catch (e) { u.termUseSudo = false; sudoCb.checked = false; toast(e.message || String(e), true); }
+      }
+    };
+  }
+  const tm = $('#tmuxT', v); if (tm) tm.onclick = () => newT('tmux new-session -A -s uiable || tmux new-session -s uiable', 'tmux');
   const dk = $('#dockT', v); if (dk) dk.onclick = async () => {
     let cs;
     try { cs = await call('docker:ps', s.id); }
@@ -534,14 +701,30 @@ function vTerminal(s, u, v) {
     if (!cs.length) return toast('No running containers on this server', true);
     const c = cs.length === 1 ? cs[0].name : await pickList('Shell into container', cs.map(x => x.name + '  ·  ' + x.image), cs.map(x => x.name));
     if (c) newT(`docker exec -it ${c} bash 2>/dev/null || docker exec -it ${c} sh`, '◫ ' + c); };
-  $('#snipB').onclick = () => snippetsDialog(s, u);
+  $('#snipB', v).onclick = () => snippetsDialog(s, u);
+  const spb = $('#termSplit', v);
+  if (spb) spb.onclick = async () => {
+    u.termSplit = !u.termSplit;
+    if (u.termSplit) {
+      if (u.terms.length < 2) await newT();
+      if (!u.activeTermB || u.activeTermB === u.activeTerm) {
+        const other = u.terms.find(t => t.sid !== u.activeTerm);
+        u.activeTermB = other ? other.sid : u.activeTerm;
+      }
+      u.termFocus = 'a';
+    }
+    $('#ths', v).classList.toggle('split', !!u.termSplit);
+    show();
+  };
   if (!u.terms.length) newT(); else show();
 }
 uc.on(d => {
   const u = S(d.id);
   if (d.ev === 'shell-data') u.terms.find(t => t.sid === d.sid)?.term.write(d.data);
   else if (d.ev === 'shell-exit') { const i = u.terms.findIndex(t => t.sid === d.sid); if (i >= 0) { u.terms[i].term.dispose(); u.terms[i].node.remove(); u.terms.splice(i, 1); }
-    if (u.activeTerm === d.sid) u.activeTerm = u.terms[0]?.sid; if (anyPane(d.id, 'terminal')) u.redrawTerms?.(); }
+    if (u.activeTerm === d.sid) u.activeTerm = u.terms.find(t => t.sid !== u.activeTermB)?.sid || u.terms[0]?.sid;
+    if (u.activeTermB === d.sid) u.activeTermB = u.terms.find(t => t.sid !== u.activeTerm)?.sid || u.terms[0]?.sid;
+    if (anyPane(d.id, 'terminal')) u.redrawTerms?.(); }
   else if (d.ev === 'closed') { const s = servers.find(x => x.id === d.id); const r = s && rulesFor(s).find(x => x.metric === 'disconnect');
     if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = []; u.statsHist = []; u.statsSince = null; u.stats = null;
     if (s && s.quick) uc.call('servers:purgetemp', d.id).catch(() => {});
@@ -552,7 +735,7 @@ uc.on(d => {
     clearTimeout(p._t); p._t = setTimeout(() => p.remove(), 1500); }
   else if (d.ev === 'toast') toast(d.message, true);
 });
-window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !== 'terminal') continue; const u = S(p.srv); const t = u.terms.find(t => t.sid === u.activeTerm); if (t) t.fit.fit(); } });
+window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !== 'terminal') continue; const u = S(p.srv); const fitSid = sid => { const t = u.terms.find(x => x.sid === sid); if (t) try { t.fit.fit(); } catch {} }; fitSid(u.activeTerm); if (u.termSplit) fitSid(u.activeTermB); } });
 
 // ---------- Files context menu (right-click / long-press)
 function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
@@ -582,7 +765,15 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
   if (!isLocal && paths.length) {
     items.push(['Delete', async () => {
       if (!confirm(`Delete ${paths.length} item(s)? Folders are deleted with everything inside.`)) return;
-      for (const q of paths) await call('fs:remove', srvId, q); load();
+      try {
+        if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId);
+        for (const q of paths) await quietCall('fs:remove', srvId, q, F.useSudo || undefined);
+        load();
+      } catch (e) {
+        try { e._toasted = true; } catch {}
+        toast(e.message || String(e), true);
+        load();
+      }
     }]);
   }
   if (!isLocal) {
@@ -637,7 +828,20 @@ function fpane(srvId, F, onOther) {
   q('mk').onclick = async () => { const n = await prompt2('New folder name'); if (n) { await call('fs:mkdir', srvId, pjoin(F.cwd, n)); load(); } };
   q('nf').onclick = async () => { const n = await prompt2('New file name'); if (n) { await call('fs:write', srvId, pjoin(F.cwd, n), ''); load(); } };
   q('rn').onclick = async () => { const [p] = F.sel; if (!p) return toast('Select something first', true); const n = await prompt2('Rename to', p.split('/').pop()); if (n) { await call('fs:rename', srvId, p, pjoin(pdir(p), n)); load(); } };
-  q('rm').onclick = async () => { if (!F.sel.size) return toast('Select something first', true); if (!confirm(`Delete ${F.sel.size} item(s)? Folders are deleted with everything inside.`)) return; for (const p of F.sel) await call('fs:remove', srvId, p); load(); };
+  q('rm').onclick = async () => {
+    if (!F.sel.size) return toast('Select something first', true);
+    if (!confirm(`Delete ${F.sel.size} item(s)? Folders are deleted with everything inside.`)) return;
+    const paths = [...F.sel];
+    try {
+      if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId);
+      for (const p of paths) await quietCall('fs:remove', srvId, p, F.useSudo || undefined);
+      load();
+    } catch (e) {
+      toast(e.message || String(e), true);
+      try { e._toasted = true; } catch {}
+      load();
+    }
+  };
   q('dl').onclick = async () => { if (!F.sel.size) return toast('Select something first', true); const d = await call('fs:download', srvId, [...F.sel]); if (d) toast('Downloaded to ' + d); };
   const flist = node.querySelector('.flist');
   if (flist) {
@@ -805,14 +1009,19 @@ function editServer(s = {}) {
     <label class="field"><span>Jump host (reach this server through another connection)</span><select id="jh"><option value="">None</option>${jumps.map(j => `<option value="${j.id}" ${s.jumpId === j.id ? 'selected' : ''}>${esc(j.name || j.host)}</option>`).join('')}</select></label></div>
     <div class="msec">Admin</div>
     <label class="field"><span>sudo password (optional)</span><input id="spw" type="password" placeholder="${s.has_sudoPassword ? '•••••• saved (leave blank to keep)' : 'Leave blank to use your login password'}"></label>
-    <p class="muted small">Passwords and keys are encrypted on this device and never leave it. With "Key + password" the key is tried first and the password is the fallback.</p><div id="tr" class="small"></div>
-    </div></div>
+    <p class="muted small">Passwords and keys are encrypted on this device and never leave it. With "Key + password" the key is tried first and the password is the fallback.</p>
+    </div>
+    <div id="tr" class="small" style="margin-top:8px"></div>
+    <p id="serTip" class="muted small hidden" style="margin-top:6px">Windows: plug in USB (or pair Bluetooth SPP) — it shows as COMx. Close Arduino IDE / PuTTY / other serial apps first, pick the port, then Test. Bluetooth appears after pairing in Windows Settings.</p>
+    </div>
     <footer>${s.id ? '<button class="danger" id="del">Delete</button><span class="spacer"></span>' : ''}<button id="c">Cancel</button><button id="t">Test</button><button id="ts">Test sudo</button><button class="primary" id="sv">Save</button></footer></div></div>`);
   document.body.append(m); focusModal(m); let a = auth, ctype = ct, keyName = s.keyName;
   const setC = x => { ctype = x; m.querySelectorAll('[data-c]').forEach(b => b.classList.toggle('active', b.dataset.c === x));
     m.querySelector('#ctSsh').classList.toggle('hidden', x !== 'ssh'); m.querySelector('#ctSer').classList.toggle('hidden', x !== 'serial');
     m.querySelector('#ctNet').classList.toggle('hidden', x === 'serial' || x === 'local'); m.querySelector('#ctLoc').classList.toggle('hidden', x !== 'local');
     m.querySelector('#ctAdv').classList.toggle('hidden', x !== 'ssh');
+    const ts = m.querySelector('#ts'); if (ts) ts.classList.toggle('hidden', x !== 'ssh');
+    const tip = m.querySelector('#serTip'); if (tip) tip.classList.toggle('hidden', x !== 'serial');
     m.querySelector('#p').value = x === 'telnet' ? (s.port || 23) : (s.port || 22);
     if (x === 'serial') ports(); };
   m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => setC(b.dataset.c)); setC(canTelnet || canSerial || canLocal ? ct : 'ssh');
@@ -854,8 +1063,15 @@ function editServer(s = {}) {
     sudoPassword: m.querySelector('#spw').value });
   m.querySelector('#c').onclick = () => m.remove();
   m.querySelector('#t').onclick = async () => { const tr = m.querySelector('#tr'); tr.innerHTML = '<span class="pill">Testing…</span>';
-    try { let r; try { r = await uc.call('servers:test', val()); } catch (e) { const k = hostKeyErr(e); if (!k) throw e;
-        if (!await trustPrompt({ ...val(), hostKey: hk }, k)) throw new Error('Host key not trusted'); hk = k.fp; r = await uc.call('servers:test', val()); } tr.innerHTML = `<span class="pill ok">✓ Connected · ${esc(r.info)}</span>`; } catch (e) { tr.innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; } };
+    try {
+      const v = val();
+      if (ctype === 'serial' && !v.serialPath) throw new Error('Pick a serial port first');
+      if (ctype === 'ssh' && (!v.host || !v.username)) throw new Error('Host and username are required');
+      if ((ctype === 'telnet' || ctype === 'raw') && !v.host) throw new Error('Host is required');
+      let r; try { r = await uc.call('servers:test', v); } catch (e) { const k = hostKeyErr(e); if (!k) throw e;
+        if (!await trustPrompt({ ...v, hostKey: hk }, k)) throw new Error('Host key not trusted'); hk = k.fp; r = await uc.call('servers:test', val()); }
+      tr.innerHTML = `<span class="pill ok">✓ Connected · ${esc(r.info)}</span>`;
+    } catch (e) { tr.innerHTML = `<span class="pill err">✕ ${esc(e.message)}</span>`; } };
   m.querySelector('#ts').onclick = async () => { const tr = m.querySelector('#tr'); tr.innerHTML = '<span class="pill">Testing sudo…</span>';
     try { const r = await uc.call('sudo:test', val(), m.querySelector('#spw').value || undefined);
       tr.innerHTML = r.ok ? `<span class="pill ok">✓ ${esc(r.info)}</span>` : `<span class="pill err">✕ ${esc(r.info)}</span>`; }

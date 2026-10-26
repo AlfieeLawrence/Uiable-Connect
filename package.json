@@ -1,10 +1,13 @@
 {
   "name": "uiable-connect",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "Uiable Connect - saved servers, SSH tunnels, terminal, files and stats for any Linux server",
   "main": "main.js",
   "author": "XTechInd",
   "license": "MIT",
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win portable zip --x64",

@@ -44,3 +44,12 @@ On the **desktop** app, when adding a connection you can **Import ~/.ssh/config*
 ## Related
 
 [Terminal](terminal.md) · [Port forwards](port-forwards.md) · [Install Uiable](install-uiable.md) · [Backup](backup-restore.md)
+
+## Serial (USB / Bluetooth) on Windows
+
+1. Plug in a USB serial adapter (or pair a Bluetooth SPP device in Windows Settings — it appears as a COM port).
+2. Close other apps that may hold the port (Arduino IDE, PuTTY, etc.).
+3. Add connection → **Serial** → pick `COMx` → baud → **Test**. You should see “Serial port opened”.
+4. Save and Connect to open a terminal on that port.
+
+Serial is desktop-only (not in the Docker/web or mobile builds).
