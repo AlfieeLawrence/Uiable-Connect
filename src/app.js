@@ -193,9 +193,16 @@ function uiPill(sec, s, u) {
     }
     return;
   }
-  p.innerHTML = u.uiable.reachable
-    ? `<span class="pill ok">● Uiable${u.uiable.version ? ' ' + esc(u.uiable.version) : ''} on :${u.uiable.port}</span> <button class="primary sm" id="openUi">Open Uiable dashboard</button> <button class="sm" id="openUiB" title="Open in your browser">Browser</button>`
-    : `<span class="pill">Uiable not found on this server · SSH features only</span>`;
+  // One status truth: running / installed-but-down / not installed (never "not found" + "up to date").
+  const ui = u.uiable;
+  const ver = ui.version ? ' ' + esc(ui.version) : '';
+  if (ui.reachable) {
+    p.innerHTML = `<span class="pill ok">● Uiable${ver} on :${ui.port}</span> <button class="primary sm" id="openUi">Open Uiable dashboard</button> <button class="sm" id="openUiB" title="Open in your browser">Browser</button>`;
+  } else if (ui.installed || ui.isUiable || ui.filesVersion) {
+    p.innerHTML = `<span class="pill warn">Uiable${ver} installed · not running</span>`;
+  } else {
+    p.innerHTML = `<span class="pill">Uiable not found on this server · SSH features only</span>`;
+  }
   p.insertAdjacentHTML('beforeend', ' <span id="uiInst"></span>'); uiInstallButton(s, u, p);
   if ($('#openUi', p)) { $('#openUi', p).onclick = () => openUi(s.id, 'window'); $('#openUiB', p).onclick = () => openUi(s.id, 'browser'); }
 }
@@ -214,7 +221,7 @@ function vOverview(s, u, v) {
       <div class="card"><div class="card-title">CPU <span class="muted">${x.cores || '?'} cores</span></div><div class="stat-big">${x.cpu == null ? '…' : x.cpu.toFixed(1) + '%'}</div>${bar(x.cpu || 0)}<p class="muted small">Load ${x.load ? x.load.map(n => n.toFixed(2)).join(' · ') : '–'}</p></div>
       <div class="card"><div class="card-title">Memory</div><div class="stat-big">${mp}%</div>${bar(mp)}<p class="muted small">${fmtB(x.memUsed)} of ${fmtB(x.memTotal)}${x.swapTotal ? ' · swap ' + fmtB(x.swapUsed) : ''}</p></div>
       <div class="card"><div class="card-title">Uptime</div><div class="stat-big">${fmtUp(x.uptime)}</div><p class="muted small ellipsis">${esc(x.hostname)} · ${esc(x.os)}</p></div>
-      <div class="card"><div class="card-title">Uiable</div><p class="small">${u.uiable?.reachable ? `Dashboard is running on the server (port ${u.uiable.port}). Use <b>Open Uiable dashboard</b> above.` : 'Not found on this server. Terminal, Files and Forwards still work over plain SSH.'}</p></div>
+      <div class="card"><div class="card-title">Uiable</div><p class="small">${u.uiable?.reachable ? `Dashboard is running on the server (port ${u.uiable.port}). Use <b>Open Uiable dashboard</b> above.` : (u.uiable?.installed || u.uiable?.isUiable) ? `Uiable ${esc(u.uiable.version || '')} is installed under /opt/uiable but not responding on the server — start it (or use Update) then Open dashboard.`.trim() : 'Not found on this server. Terminal, Files and Forwards still work over plain SSH.'}</p></div>
     </div><div class="card" style="margin-top:16px"><div class="card-title">Storage</div>${x.disks.map(d => { const p = pct(d.used, d.size); return `<div style="margin-bottom:12px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${fmtB(d.used)} / ${fmtB(d.size)} · ${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted">No disks reported</p>'}</div>`;
   };
   const tick = async () => { if (!anyPane(s.id, 'overview')) return; if (!u.statsBusy) { u.statsBusy = true; try { onStats(s, await uc.call('stats', s.id)); } catch {} u.statsBusy = false; } if (anyPane(s.id, 'overview')) { draw(); statsTimer = setTimeout(tick, document.hidden ? 15000 : 3000); } };
@@ -237,15 +244,15 @@ const applyTheme = (pref) => {
   // (terminal select still overrides via uc.ttheme).
   return resolved;
 };
-applyTheme(); // apply persisted app theme as soon as app.js runs
+try { applyTheme(); } catch (e) { console.error(e); } // never let theme setup abort boot
 if (window.matchMedia) {
   try {
-    matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
-      if ((localStorage.getItem(THEME_KEY) || 'dark') === 'system') applyTheme();
-    });
-  } catch (_) {}
+    const mq = matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => { try { if ((localStorage.getItem(THEME_KEY) || 'dark') === 'system') applyTheme(); } catch (_) {} };
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+  } catch {}
 }
-
 const TERM_THEMES = {
   dark: { background: '#0b0d14', foreground: '#e8eaf2', cursor: '#7c5cff' },
   light: { background: '#fafbfe', foreground: '#1a1c26', cursor: '#5b3df5' },
@@ -636,14 +643,40 @@ environment:
     <footer><span class="spacer"></span><button class="primary" id="c">Done</button></footer></div></div>`);
   document.body.append(m); m.querySelector('#c').onclick = () => m.remove();
 }
-(async () => { const t = termTheme(); document.documentElement.style.setProperty('--tbg', t.background); // restore terminal theme
-  setTimeout(() => $('#boot')?.classList.add('gone'), 6000); // never trap the UI behind the splash
+(async () => {
+  // Fail-safe: never leave the user on #boot. Register timers BEFORE any await / localStorage.
+  const hideBoot = () => { try { const b = document.getElementById('boot'); if (b) { b.classList.add('gone'); b.setAttribute('aria-hidden', 'true'); } } catch (_) {} };
+  setTimeout(hideBoot, 1200);
+  setTimeout(hideBoot, 4000);
+  setTimeout(hideBoot, 8000);
+  try { const t = termTheme(); document.documentElement.style.setProperty('--tbg', t.background); } catch (_) {}
+  // Paint the empty shell immediately so iPhone/iPad are never a black void if keystore/refresh hangs.
+  try { if (typeof renderSide === 'function') renderSide(); if (typeof renderMain === 'function') renderMain(); } catch (e) { console.error(e); }
+  hideBoot();
   try {
-    APP = await (window.uc ? uc.call('app:info') : Promise.reject()).catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' }));
-    await refresh();
-  } catch (e) { console.error(e); try { renderMain(); } catch (_) {} }
-  $('#boot')?.classList.add('gone');
-  if (APP && APP.platform === 'web') { if (!APP.hostNet && localStorage.getItem('uc.hn.dismiss') !== '1') hnShow(); setInterval(hnPoll, 30000); } })();
+    const infoPromise = (window.uc ? uc.call('app:info') : Promise.reject()).catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' }));
+    APP = await Promise.race([
+      infoPromise,
+      new Promise(resolve => setTimeout(() => resolve({ platform: ON_MOBILE ? 'mobile' : 'desktop', timedOut: true }), 2500))
+    ]);
+  } catch (e) {
+    console.error(e);
+    APP = { platform: ON_MOBILE ? 'mobile' : 'desktop' };
+  }
+  hideBoot();
+  try {
+    await Promise.race([
+      refresh(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('refresh timeout')), 5000))
+    ]);
+  } catch (e) {
+    console.error(e);
+    try { renderSide(); renderMain(); } catch (_) {}
+  }
+  hideBoot();
+  if (APP && APP.platform === 'web') { if (!APP.hostNet && localStorage.getItem('uc.hn.dismiss') !== '1') hnShow(); setInterval(hnPoll, 30000); }
+})();
+
 
 // ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure
 (async function checkUpdate() {

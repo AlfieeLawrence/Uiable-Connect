@@ -6,7 +6,7 @@
   display: grid; place-content: center; gap: 10px; text-align: center;
   pointer-events: none; background: var(--bg); transition: opacity .28s ease;
 }
-#boot.gone { opacity: 0; pointer-events: none; visibility: hidden; }
+#boot.gone { opacity: 0; pointer-events: none; visibility: hidden; display: none !important; }
 .boot-logo { font-size: 28px; font-weight: 700; letter-spacing: -.03em; }
 .boot-logo span { color: var(--muted); font-weight: 450; }
 .boot-sub { color: var(--muted); font-size: 13px; animation: pulse 1.4s ease-in-out infinite; }
@@ -15,11 +15,13 @@
 /* ---------- app shell ---------- */
 #layout {
   display: flex;
-  /* Prefer measured --vvh (set by mobile.js). Never let a broken 100dvh (0 in some WKWebViews) wipe 100vh. */
+  /* fill-available first (may be 0 in some WebViews); 100vh / --vvh must win afterward. Never use 100dvh. */
+  height: -webkit-fill-available;
   height: 100vh;
   height: var(--vvh, 100vh);
-  min-height: 100vh;
   min-height: -webkit-fill-available;
+  min-height: 100vh;
+  min-height: var(--vvh, 100vh);
   padding-left: var(--sal); padding-right: var(--sar);
   overflow: hidden;
 }

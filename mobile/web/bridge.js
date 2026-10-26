@@ -22,7 +22,16 @@
   let data = null;
   async function load() {
     if (data) return data;
-    try { const r = await Ssh.secretGet({ key: 'servers' }); data = r && r.value ? JSON.parse(r.value) : { servers: [] }; } catch { data = { servers: [] }; }
+    try {
+      if (!Ssh || typeof Ssh.secretGet !== 'function') { data = { servers: [] }; return data; }
+      // Keychain/Keystore can hang on some iOS launches; never block UI boot on it.
+      const r = await Promise.race([
+        Ssh.secretGet({ key: 'servers' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('secretGet timeout')), 4000))
+      ]);
+      data = r && r.value ? JSON.parse(r.value) : { servers: [] };
+      if (!data || !Array.isArray(data.servers)) data = { servers: [] };
+    } catch { data = { servers: [] }; }
     return data;
   }
   const save = () => Ssh.secretSet({ key: 'servers', value: JSON.stringify(data) });
@@ -159,14 +168,31 @@ if [ -z "$O" ]; then
   for P in $(echo 8080 $L | tr ' ' '\\n' | sort -un | head -14); do
     ( Q=$(probe 127.0.0.1:$P); [ -n "$Q" ] && echo "@@127.0.0.1:$P $Q" ) &
   done; wait
-else echo "@@$EB:$EP $O"; fi`, 15000).catch(() => ({ out: '' }));
+else echo "@@$EB:$EP $O"; fi
+FV=$(sed -n 's/.*"version": *"\\([^"]*\\)".*/\\1/p' /opt/uiable/package.json 2>/dev/null | head -1)
+echo "files=$FV"
+echo "envport=$EP"`, 15000).catch(() => ({ out: '' }));
       let found = null;
       for (const l of (r.out || '').split('\n')) {
         const m = l.match(/^@@(\S+)\s+(\{.*)/); if (!m || found) continue;
         if (!/"version"\s*:/.test(m[2]) && !/uiable/i.test(m[2])) continue;
         const v = m[2].match(/"version"\s*:\s*"([^"]+)"/); found = { port: Number(m[1].split(':').pop()), version: v ? v[1] : null };
       }
-      return { reachable: !!found, isUiable: !!found, version: found && found.version, port: found ? found.port : (extra || 8080) }; },
+      let filesVer = null, envPort = '';
+      for (const l of (r.out || '').split('\n')) {
+        const fm = l.match(/^files=(.*)$/); if (fm && fm[1]) filesVer = fm[1].trim() || null;
+        const pm = l.match(/^envport=(.*)$/); if (pm && pm[1]) envPort = pm[1].trim();
+      }
+      const installed = !!(found || filesVer);
+      return {
+        reachable: !!found,
+        running: !!found,
+        isUiable: installed,
+        installed,
+        version: (found && found.version) || filesVer || null,
+        filesVersion: filesVer,
+        port: found ? found.port : (Number(envPort) || extra || 8080)
+      }; },
     'uiable:open': async (id, mode, port) => { await load(); const srv = data.servers.find(x => x.id === id);
       const saved = (srv.forwards || []).find(x => x.id === 'uiable') || {};
       const f = { id: 'uiable', localPort: saved.localPort || 8080, remoteHost: '127.0.0.1', remotePort: Number(port) || saved.remotePort || 8080 };

@@ -122,7 +122,7 @@ const vNewer = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').
 async function uiInstallState(s, u) {
   const [d, latest] = await Promise.all([uc.call('exec', s.id, UI_DETECT, 20000), uc.call('uiable:latest').catch(() => null)]);
   const i = kv(d.out || ''); const cur = i.running || i.files || '';
-  u.uiInst = { ...i, installed: !!(i.files || i.running || u.uiable?.isUiable), cur, latest };
+  u.uiInst = { ...i, installed: !!(i.files || i.running || u.uiable?.isUiable || u.uiable?.installed || u.uiable?.reachable), cur, latest, running: !!(i.running || u.uiable?.reachable) };
   return u.uiInst;
 }
 async function uiInstallButton(s, u, pill) {
@@ -130,9 +130,19 @@ async function uiInstallButton(s, u, pill) {
   if (!u.uiInst) { try { await uiInstallState(s, u); } catch { return; } }
   if (!box.isConnected) return;
   const i = u.uiInst, L = i.latest;
-  if (!L) { box.innerHTML = i.installed ? `<span class="pill small">Uiable ${esc(i.cur)}</span>` : ''; return; }
+  const running = !!(u.uiable && u.uiable.reachable);
+  // Prefer live detect version when present so pill + button agree
+  if (u.uiable && (u.uiable.installed || u.uiable.reachable || u.uiable.filesVersion)) {
+    i.installed = true;
+    if (!i.cur) i.cur = u.uiable.version || u.uiable.filesVersion || '';
+  }
+  if (!L) { box.innerHTML = i.installed ? `<span class="pill small">Uiable ${esc(i.cur)}${running ? '' : ' · not running'}</span>` : ''; return; }
   const label = !i.installed ? `Install Uiable ${esc(L.version)}` : vNewer(L.version, i.cur || '0') ? `Update Uiable to ${esc(L.version)}` : '';
-  box.innerHTML = label ? `<button class="sm ${i.installed ? 'primary' : ''}" id="uiGo">${label}</button>` : `<span class="pill ok small">Uiable ${esc(i.cur)} · up to date</span>`;
+  box.innerHTML = label
+    ? `<button class="sm ${i.installed ? 'primary' : ''}" id="uiGo">${label}</button>`
+    : (running
+      ? `<span class="pill ok small">Uiable ${esc(i.cur)} · up to date</span>`
+      : `<span class="pill small">Uiable ${esc(i.cur)} · installed, not running</span>`);
   if (box.querySelector('#uiGo')) box.querySelector('#uiGo').onclick = () => uiInstallRun(s, u);
 }
 async function uiInstallRun(s, u) {

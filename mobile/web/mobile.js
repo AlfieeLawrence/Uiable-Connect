@@ -1,8 +1,14 @@
 'use strict';
 // Touch layout glue for the shared desktop UI (src/app.js). Loaded after app.js on mobile only.
 (function () {
+  // Belt-and-suspenders: clear splash even if app.js boot IIFE never ran.
+  try { const b = document.getElementById('boot'); if (b) { b.classList.add('gone'); b.style.display = 'none'; } } catch (_) {}
   const M = window.UC_MOBILE || {}; const body = document.body;
   body.classList.add('mobile', 'plat-' + (M.platform || 'web'));
+  try { // Early --vvh before decorate/layout paint
+    const h = (window.visualViewport && visualViewport.height) || window.innerHeight || document.documentElement.clientHeight;
+    if (h) document.documentElement.style.setProperty('--vvh', h + 'px');
+  } catch (_) {}
   const phone = () => matchMedia('(max-width: 760px)').matches;
 
   // ---- collapsible server drawer (phones) / collapsible sidebar (tablets)
