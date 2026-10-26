@@ -2,7 +2,7 @@
 // Uiable Connect for Docker: serves the same UI (../src) as a web app and implements the window.uc channels over
 // HTTP (POST /api/call, /api/send) + Server-Sent Events (/api/events), backed by lib/core.js (ssh2). No extra deps.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), os = require('os');
-const {makeSession, testConnection, testSudo, sudoExec, jumpSock, listDockerPs } = require('../lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame } = require('../lib/core');
 const net = require('net');
 const { Store } = require('../lib/store');
 const { History } = require('../lib/history');
@@ -105,10 +105,10 @@ const H = {
   'history:get': () => store.setting('history', true),
   'history:set': v => store.setSetting('history', !!v),
   'shell:open': (id, sid, c, r) => { log(id, 'shell'); return S(id).openShell(sid, c, r); },
-  'fs:home': id => S(id).home(), 'fs:list': (id, p) => S(id).list(p), 'fs:mkdir': (id, p) => S(id).mkdir(p),
+  'fs:home': id => S(id).home(), 'fs:list': async (id, p, sudo) => { if (!sudo) return S(id).list(p); const srv = store.full(id); return sudoList(S(id), p, srv.sudoPassword || srv.password || null); }, 'fs:mkdir': (id, p) => S(id).mkdir(p),
   'fs:rename': (id, a, b) => S(id).rename(a, b), 'fs:remove': (id, p) => { log(id, 'remove', p); return S(id).remove(p); },
-  'fs:read': (id, p) => S(id).readText(p), 'fs:write': (id, p, t) => S(id).writeText(p, t),
-  'fs:copy': async (id, src, toId, dstDir, cx) => { if (toId === id) { const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
+  'fs:read': async (id, p, sudo) => { if (!sudo) return S(id).readText(p); const srv = store.full(id); return sudoReadText(S(id), p, srv.sudoPassword || srv.password || null); }, 'fs:write': async (id, p, t, sudo) => { if (!sudo) return S(id).writeText(p, t); log(id, 'write-sudo', p); const srv = store.full(id); return sudoWriteText(S(id), p, t, srv.sudoPassword || srv.password || null); },
+  'fs:copy': async (id, src, toId, dstDir, cx, sudo) => { if (toId === id) { if (sudo) { const srv = store.full(id); return sudoCopySame(S(id), String(src), String(dstDir), srv.sudoPassword || srv.password || null); } const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
     log(id, 'copy', `${src} -> ${toId}:${dstDir}`); const ab = { dead: false }; if (cx) copies.set(cx, ab);
     try { return await S(id).copyTo(S(toId), String(src), String(dstDir), pr => emit({ id, ev: 'progress', cx, ...pr }), () => ab.dead); }
     finally { copies.delete(cx); } },
@@ -181,10 +181,23 @@ const server = http.createServer(async (req, res) => {
       const fn = Object.prototype.hasOwnProperty.call(H, ch) && H[ch]; if (!fn) return json(res, 404, { ok: false, error: 'Unknown channel ' + ch });
       try { return json(res, 200, { ok: true, data: await fn(...(Array.isArray(a) ? a : [])) }); } catch (e) { return json(res, 200, { ok: false, error: e.message || String(e) }); } }
     if (p === '/api/send' && req.method === 'POST') { for (const [ch, ...a] of JSON.parse((await body(req, 4 * 1024 * 1024)).toString())) { const f = Object.prototype.hasOwnProperty.call(SEND, ch) && SEND[ch]; if (f) f(...a); } res.writeHead(204); return res.end(); }
-    if (p === '/api/upload' && req.method === 'POST') { const id = u.searchParams.get('id'), dest = u.searchParams.get('path'); const sftp = await S(id).sftp();
+    if (p === '/api/upload' && req.method === 'POST') { const id = u.searchParams.get('id'), dest = u.searchParams.get('path'), useSudo = u.searchParams.get('sudo') === '1';
       const tot = Number(req.headers['content-length']) || 0; let t = 0, last = 0; const name = dest.split('/').pop();
+      if (useSudo) {
+        const sess = S(id); const srv = store.full(id); const home = await sess.home(); const stageDir = home + '/.uiable-connect/.up';
+        const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'";
+        await sess.exec('mkdir -p -m 700 ' + q(stageDir));
+        const staged = stageDir + '/' + name;
+        const sftp = await sess.sftp();
+        await new Promise((ok, no) => { const w = sftp.createWriteStream(staged); w.on('error', no); w.on('close', ok); req.on('data', c => { t += c.length; if (Date.now() - last > 300) { last = Date.now(); emit({ id, ev: 'progress', name, t, tot }); } }); req.pipe(w); });
+        const r = await sudoExec(sess, 'rm -rf -- ' + q(dest) + ' && cp -a -- ' + q(staged) + ' ' + q(dest) + ' && rm -rf -- ' + q(staged), srv.sudoPassword || srv.password || null, { timeout: 300000 });
+        if (r.code) return json(res, 200, { ok: false, error: (r.err || r.out || 'sudo upload failed').trim().split('\n').pop() });
+        log(id, 'upload-sudo', dest); return json(res, 200, { ok: true, data: true });
+      }
+      const sftp = await S(id).sftp();
       await new Promise((ok, no) => { const w = sftp.createWriteStream(dest); w.on('error', no); w.on('close', ok); req.on('data', c => { t += c.length; if (Date.now() - last > 300) { last = Date.now(); emit({ id, ev: 'progress', name, t, tot }); } }); req.pipe(w); });
       log(id, 'upload', dest); return json(res, 200, { ok: true, data: true }); }
+
     if (p === '/api/download') { const id = u.searchParams.get('id'), rp = u.searchParams.get('path'); const s = S(id); const name = path.posix.basename(rp) || 'download';
       log(id, 'download', rp);
       if (await s.isDir(rp)) { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ucd-')); try { await s.download(rp, tmp);

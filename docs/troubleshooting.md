@@ -58,3 +58,8 @@ Install the Docker **Compose plugin** on the server. Connect will not modify an 
 - Confirm you are on the latest [release](https://github.com/AlfieeLawrence/Uiable-Connect/releases)  
 - Try a [backup export](backup-restore.md) before wiping local data  
 - Open an issue on [Uiable-Connect](https://github.com/AlfieeLawrence/Uiable-Connect/issues) with platform, version, and steps (no passwords or private keys)
+
+## Files: permission denied / need root
+
+Tick **Use sudo** in the Files tab (or **Save as sudo** in the editor). Save a sudo password on the connection first, or enter one when prompted. History never stores that password.
+

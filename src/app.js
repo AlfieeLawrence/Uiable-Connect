@@ -563,7 +563,7 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
   if (f && (f.dir || (f.link && !f.size))) {
     items.push(['Open folder', () => { F.cwd = p; load(); }]);
   } else if (f && !isLocal) {
-    items.push(['Open / edit', () => editFile(srvId, p)]);
+    items.push(['Open / edit', () => editFile(srvId, p, F.useSudo)]);
   }
   if (paths.length && !isLocal) {
     items.push(['Download', async () => { const d = await call('fs:download', srvId, paths); if (d) toast('Downloaded to ' + d); }]);
@@ -602,15 +602,18 @@ function bindLongPress(node, fn) {
 // ---------- Files (SFTP): one pane per server — open a second pane to drag files between servers
 function fpane(srvId, F, onOther) {
   // F = per-pane state { cwd, sel }. Returns { node, load }. Rows are draggable onto the sibling pane.
-  F.sel ||= new Set(); const isLocal = srvId === '__local';
+  F.sel ||= new Set(); F.useSudo = !!F.useSudo; const isLocal = srvId === '__local';
   const node = el(`<div class="fpane"><div class="fhead"><button class="sm" data-r="up" title="Up one folder">↑</button><div class="crumbs grow" data-r="crumbs"></div><button class="sm" data-r="rf" title="Refresh">⟳</button></div>
-    <div class="fhead2" data-r="tools"><button class="sm" data-r="mk" title="New folder">+ Folder</button><button class="sm" data-r="nf" title="New file">+ File</button><span class="spacer"></span><button class="sm" data-r="dl" title="Download selected">Download</button><button class="sm" data-r="rn" title="Rename selected">Rename</button><button class="sm danger" data-r="rm" title="Delete selected">Delete</button></div>
+    <div class="fhead2" data-r="tools"><button class="sm" data-r="mk" title="New folder">+ Folder</button><button class="sm" data-r="nf" title="New file">+ File</button><label class="row small" style="gap:6px;margin:0" title="Browse, view, upload and copy as root using the saved sudo password"><input type="checkbox" data-r="sudo"> Use sudo</label><span class="spacer"></span><button class="sm" data-r="dl" title="Download selected">Download</button><button class="sm" data-r="rn" title="Rename selected">Rename</button><button class="sm danger" data-r="rm" title="Delete selected">Delete</button></div>
     <div class="scroll flist"><table class="list"><tbody data-r="fl"></tbody></table></div></div>`);
   let items = [];
   const q = r => node.querySelector(`[data-r="${r}"]`);
   const load = async () => {
     if (!F.cwd) F.cwd = isLocal ? await uc.call('lfs:home') : await call('fs:home', srvId);
-    try { items = isLocal ? await uc.call('lfs:list', F.cwd) : await uc.call('fs:list', srvId, F.cwd); } catch (e) { toast(e.message, true); items = []; }
+    try {
+      if (!isLocal && F.useSudo) await ensureSudoForFiles(srvId);
+      items = isLocal ? await uc.call('lfs:list', F.cwd) : await uc.call('fs:list', srvId, F.cwd, F.useSudo || undefined);
+    } catch (e) { toast(e.message, true); items = []; }
     F.sel.clear(); const parts = F.cwd.split('/').filter(Boolean);
     q('crumbs').innerHTML = `<a data-p="/">/</a>` + parts.map((p, i) => `<a data-p="/${parts.slice(0, i + 1).join('/')}">${esc(p)}</a><span class="muted">/</span>`).join('');
     q('crumbs').querySelectorAll('a').forEach(a => a.onclick = () => { F.cwd = a.dataset.p; load(); });
@@ -618,7 +621,7 @@ function fpane(srvId, F, onOther) {
     q('fl').querySelectorAll('tr[data-i]').forEach(r => {
       const f = items[r.dataset.i], p = pjoin(F.cwd, f.name);
       r.onclick = e => { if (!e.ctrlKey && !e.shiftKey) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); } F.sel.has(p) ? F.sel.delete(p) : F.sel.add(p); r.classList.toggle('sel', F.sel.has(p)); };
-      r.ondblclick = () => f.dir || f.link && !f.size ? (F.cwd = p, load()) : isLocal ? null : editFile(srvId, p);
+      r.ondblclick = () => f.dir || f.link && !f.size ? (F.cwd = p, load()) : isLocal ? null : editFile(srvId, p, F.useSudo);
       r.ondragstart = e => { e.dataTransfer.setData('application/x-uc-row', JSON.stringify({ srv: srvId, path: p, dir: f.dir, local: isLocal })); e.dataTransfer.effectAllowed = 'copy'; };
       const openFileCtx = (cx, cy) => {
         if (!F.sel.has(p)) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); F.sel.add(p); r.classList.add('sel'); }
@@ -629,6 +632,7 @@ function fpane(srvId, F, onOther) {
     });
   };
   q('up').onclick = () => { F.cwd = pdir(F.cwd); load(); }; q('rf').onclick = load;
+  const sudoCb = q('sudo'); if (sudoCb) { sudoCb.checked = !!F.useSudo; sudoCb.onchange = () => { F.useSudo = !!sudoCb.checked; load(); }; }
   if (isLocal) q('tools').style.display = 'none';
   q('mk').onclick = async () => { const n = await prompt2('New folder name'); if (n) { await call('fs:mkdir', srvId, pjoin(F.cwd, n)); load(); } };
   q('nf').onclick = async () => { const n = await prompt2('New file name'); if (n) { await call('fs:write', srvId, pjoin(F.cwd, n), ''); load(); } };
@@ -654,13 +658,16 @@ function fpane(srvId, F, onOther) {
     const row = e.dataTransfer.getData('application/x-uc-row');
     if (row) { const r = JSON.parse(row); if (r.srv === srvId && pdir(r.path) === F.cwd) return;
       try {
-        if (r.local) await call('fs:upload', srvId, [r.path], F.cwd); // local file -> remote pane
+        if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId);
+        if (r.local) await call('fs:upload', srvId, [r.path], F.cwd, F.useSudo || undefined); // local file -> remote pane
         else if (isLocal) await call('fs:downloadTo', r.srv, r.path, F.cwd); // remote file -> this device
-        else { const cx = 'c' + Date.now().toString(36); await call('fs:copy', r.srv, r.path, srvId, F.cwd, cx); } // server -> server
+        else { const cx = 'c' + Date.now().toString(36); await call('fs:copy', r.srv, r.path, srvId, F.cwd, cx, F.useSudo || undefined); } // server -> server
         toast('Copied');
       } catch {} load(); onOther && onOther(); return; }
     const paths = [...e.dataTransfer.files].map(f => uc.pathFor(f)).filter(Boolean);
-    if (!paths.length) return; await call('fs:upload', srvId, paths, F.cwd); toast(`Uploaded ${paths.length} item(s)`); load();
+    if (!paths.length) return;
+    if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId);
+    await call('fs:upload', srvId, paths, F.cwd, F.useSudo || undefined); toast(`Uploaded ${paths.length} item(s)`); load();
   };
   return { node, load };
 }
@@ -705,6 +712,19 @@ function pickList(title, labels, vals) { return new Promise(res => { // chooser:
     r.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(+r.dataset.i); } };
   });
 }); }
+
+
+/** Make sure the connection has a sudo (or login) password before a sudo file op. */
+async function ensureSudoForFiles(srvId) {
+  const s = servers.find(x => x.id === srvId);
+  if (!s) throw new Error('Server not found');
+  if (s.has_sudoPassword || s.has_password) return;
+  const pw = await prompt2(`sudo password for ${s.username || 'this user'} (needed for Use sudo)`, '', true);
+  if (pw == null || pw === '') throw new Error('sudo password required — save one on the connection, or enter it now');
+  await call('servers:save', { id: s.id, sudoPassword: pw });
+  s.has_sudoPassword = true;
+  toast('sudo password saved on this connection');
+}
 
 function prompt2(title, val = '', pw = false) { return new Promise(res => {
   const m = el(`<div class="modal-bg"><div class="modal"><header><h3>${esc(title)}</h3></header><div class="body"><input ${pw ? 'type="password"' : ''}></div><footer><button id="c">Cancel</button><button class="primary" id="o">OK</button></footer></div></div>`);

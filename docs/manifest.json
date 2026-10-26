@@ -1,6 +1,6 @@
 {
   "name": "Uiable Connect",
-  "versionHint": "1.4.3",
+  "versionHint": "1.4.7",
   "repository": "https://github.com/AlfieeLawrence/Uiable-Connect",
   "releases": "https://github.com/AlfieeLawrence/Uiable-Connect/releases",
   "companion": "https://github.com/AlfieeLawrence/uiable",
@@ -71,7 +71,7 @@
     },
     {
       "title": "Files (SFTP)",
-      "description": "Browse, upload, download, edit, and copy between servers over SFTP.",
+      "description": "Browse, upload, download, edit, and copy between servers over SFTP \u2014 with optional sudo.",
       "order": 31,
       "slug": "files-sftp",
       "path": "docs/files-sftp.md"

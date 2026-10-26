@@ -1,14 +1,16 @@
 'use strict';
 // Small SFTP text editor: line numbers, monospace, Ctrl/Cmd+S, unsaved-changes guard. Plain text on purpose (stays light).
 // Size limit (2 MB) and binary refusal are enforced by fs:read on every platform.
-async function editFile(id, p) {
-  let txt; try { txt = await uc.call('fs:read', id, p); } catch (e) { return toast(e.message, true); }
+async function editFile(id, p, useSudo) {
+  let txt; try { txt = await uc.call('fs:read', id, p, !!useSudo); } catch (e) { return toast(e.message, true); }
   const crlf = /\r\n/.test(txt); txt = txt.replace(/\r\n/g, '\n'); // textarea normalises line endings; restore them on save
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   const name = p.split('/').pop();
   const m = el(`<div class="modal-bg ed-bg"><div class="modal full editor-modal"><header><h3 class="grow mono ellipsis" title="${esc(p)}"><span class="ed-dirty"></span>${esc(name)}</h3><span class="muted small mono ellipsis ed-path">${esc(p)}</span></header>
     <div class="body ed-body"><div class="ed"><pre class="ed-gut" aria-hidden="true"></pre><textarea class="ed-ta" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea></div></div>
-    <footer><span class="muted small mono ed-st"></span><span class="grow"></span><button id="c">Close</button><button class="primary" id="sv">Save <span class="muted small">${mac ? '⌘S' : 'Ctrl+S'}</span></button></footer></div></div>`);
+    <footer><span class="muted small mono ed-st"></span><span class="grow"></span><button id="c">Close</button>
+    <div class="split-btn"><button class="primary" id="sv">Save <span class="muted small">${mac ? '⌘S' : 'Ctrl+S'}</span></button><button class="primary split-caret" id="svmenu" title="More save options" aria-haspopup="true">▾</button>
+      <div class="split-menu hidden" id="svdrop"><button type="button" id="svsudo">Save as sudo</button></div></div></footer></div></div>`);
   document.body.append(m);
   const ta = m.querySelector('textarea'), gut = m.querySelector('.ed-gut'), st = m.querySelector('.ed-st'), dirty = m.querySelector('.ed-dirty');
   ta.value = txt; let lines = 0, raf = 0, saving = false;
@@ -19,14 +21,24 @@ async function editFile(id, p) {
     gut.scrollTop = ta.scrollTop; };
   const later = () => { if (!raf) raf = requestAnimationFrame(update); };
   ta.addEventListener('input', later); ta.addEventListener('keyup', later); ta.addEventListener('click', later); ta.addEventListener('scroll', () => { gut.scrollTop = ta.scrollTop; });
-  const save = async () => { if (saving) return; saving = true; const v = ta.value;
-    try { await call('fs:write', id, p, crlf ? v.replace(/\n/g, '\r\n') : v); txt = v; toast('Saved ' + name); update(); } catch {} saving = false; };
+  const save = async (asSudo) => { if (saving) return; saving = true; const v = ta.value;
+    try {
+      if (asSudo && typeof ensureSudoForFiles === 'function') await ensureSudoForFiles(id);
+      await call('fs:write', id, p, crlf ? v.replace(/\n/g, '\r\n') : v, !!asSudo);
+      txt = v; toast(asSudo ? 'Saved with sudo: ' + name : 'Saved ' + name); update();
+    } catch {} saving = false; };
   const close = () => { if (ta.value !== txt && !confirm('You have unsaved changes. Close without saving?')) return; m.remove(); };
+  const drop = m.querySelector('#svdrop'), caret = m.querySelector('#svmenu');
+  caret.onclick = e => { e.stopPropagation(); drop.classList.toggle('hidden'); };
+  const hideDrop = () => drop.classList.add('hidden');
+  m.addEventListener('click', e => { if (!e.target.closest('.split-btn')) hideDrop(); });
   m.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); hideDrop(); save(false); }
     else if (e.key === 'Escape') { e.preventDefault(); close(); }
     else if (e.key === 'Tab' && e.target === ta && !e.ctrlKey && !e.metaKey) { e.preventDefault(); ta.setRangeText('\t', ta.selectionStart, ta.selectionEnd, 'end'); later(); }
   });
-  m.querySelector('#sv').onclick = save; m.querySelector('#c').onclick = close;
+  m.querySelector('#sv').onclick = () => { hideDrop(); save(false); };
+  m.querySelector('#svsudo').onclick = () => { hideDrop(); save(true); };
+  m.querySelector('#c').onclick = close;
   ta.focus(); ta.setSelectionRange(0, 0); ta.scrollTop = 0; update();
 }

@@ -27,7 +27,7 @@ Releases ship from GitHub Actions on each version tag: [Releases](https://github
 2. Click **+ Add connection**.
 3. Fill in **name**, **host**, **port** (usually `22`), and **username**.
 4. Choose auth: **password**, **SSH key** (paste or pick a file, optional passphrase), or **Key + password** (key first, password as fallback).
-5. Optionally save a **sudo password** for installs and admin commands on that server.
+5. Optionally save a **sudo password** for installs, admin commands, and Files **Use sudo** / **Save as sudo**.
 6. Tap **Test**, then save.
 7. Open the server — you get tabs such as Home (overview), Terminal, Files, Ports, Health, Alerts, and History (SSH). Telnet/serial connections focus on the terminal.
 

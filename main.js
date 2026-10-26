@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu, Notificat
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock, listDockerPs } = require('./lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame } = require('./lib/core');
 const os = require('os');
 const net = require('net');
 const { Store } = require('./lib/store');
@@ -215,16 +215,16 @@ ipcMain.on('shell:write', (_e, id, sid, d) => sessions.get(id)?.shellWrite(sid, 
 ipcMain.on('shell:resize', (_e, id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r));
 ipcMain.on('shell:close', (_e, id, sid) => sessions.get(id)?.shellClose(sid));
 h('fs:home', id => S(id).home());
-h('fs:list', (id, p) => S(id).list(p));
+h('fs:list', async (id, p, sudo) => { if (!sudo) return S(id).list(p); const srv = store.full(id); return sudoList(S(id), p, srv.sudoPassword || srv.password || null); });
 h('fs:mkdir', (id, p) => S(id).mkdir(p));
 h('fs:rename', (id, a, b) => S(id).rename(a, b));
 h('fs:remove', (id, p) => { log(id, 'remove', p); return S(id).remove(p); });
-h('fs:read', (id, p) => S(id).readText(p));
-h('fs:write', (id, p, t) => S(id).writeText(p, t));
+h('fs:read', async (id, p, sudo) => { if (!sudo) return S(id).readText(p); const srv = store.full(id); return sudoReadText(S(id), p, srv.sudoPassword || srv.password || null); });
+h('fs:write', async (id, p, t, sudo) => { if (!sudo) return S(id).writeText(p, t); log(id, 'write-sudo', p); const srv = store.full(id); return sudoWriteText(S(id), p, t, srv.sudoPassword || srv.password || null); });
 const copies = new Map(); // cx -> { dead }
 h('fs:cancel', cx => { const c = copies.get(cx); if (c) c.dead = true; return true; });
-h('fs:copy', async (id, src, toId, dstDir, cx) => { const dst = S(toId); // same-server copy -> plain cp; otherwise relay through this app
-  if (toId === id) { const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
+h('fs:copy', async (id, src, toId, dstDir, cx, sudo) => { const dst = S(toId); // same-server copy -> plain cp; otherwise relay through this app
+  if (toId === id) { if (sudo) { const srv = store.full(id); return sudoCopySame(S(id), String(src), String(dstDir), srv.sudoPassword || srv.password || null); } const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
   log(id, 'copy', `${src} -> ${toId}:${dstDir}`);
   const ab = { dead: false }; if (cx) copies.set(cx, ab);
   try { return await S(id).copyTo(dst, String(src), String(dstDir), pr => send('ev', { id, ev: 'progress', cx, ...pr }), () => ab.dead); }
@@ -252,7 +252,7 @@ h('docker:ps', async id => {
   const srv = store.full(id);
   return listDockerPs(S(id), { sudoPw: srv.sudoPassword || srv.password || null });
 });
-h('fs:upload', async (id, locals, dir) => { for (const l of locals) await S(id).upload(l, dir, pr => send('ev', { id, ev: 'progress', ...pr })); log(id, 'upload', `${locals.length} item(s) -> ${dir}`); return true; });
+h('fs:upload', async (id, locals, dir, sudo) => { const srv = store.full(id); const pw = srv.sudoPassword || srv.password || null; for (const l of locals) { if (sudo) await sudoUploadPath(S(id), l, dir, pw, pr => send('ev', { id, ev: 'progress', ...pr })); else await S(id).upload(l, dir, pr => send('ev', { id, ev: 'progress', ...pr })); } log(id, sudo ? 'upload-sudo' : 'upload', `${locals.length} item(s) -> ${dir}`); return true; });
 h('fs:download', async (id, remotes) => {
   const r = await dialog.showOpenDialog(win, { title: 'Download to…', properties: ['openDirectory', 'createDirectory'] });
   if (r.canceled) return null;

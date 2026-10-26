@@ -9,8 +9,8 @@
   const L = {
     'key:pick': () => new Promise(res => { const i = document.createElement('input'); i.type = 'file';
       i.onchange = async () => { const f = i.files[0]; res(f ? { name: f.name, text: await f.text() } : null); }; i.click(); }),
-    'fs:upload': async (id, files, dir) => { for (const f of files) { if (!(f instanceof File)) continue;
-      const r = await fetch(`api/upload?id=${encodeURIComponent(id)}&path=${encodeURIComponent((dir.endsWith('/') ? dir : dir + '/') + f.name)}`, { method: 'POST', body: f, credentials: 'same-origin' });
+    'fs:upload': async (id, files, dir, sudo) => { for (const f of files) { if (!(f instanceof File)) continue;
+      const r = await fetch(`api/upload?id=${encodeURIComponent(id)}&path=${encodeURIComponent((dir.endsWith('/') ? dir : dir + '/') + f.name)}${sudo ? '&sudo=1' : ''}`, { method: 'POST', body: f, credentials: 'same-origin' });
       const j = await r.json(); if (!j.ok) throw new Error(j.error); } return true; },
     'fs:download': async (id, remotes) => { for (const p of remotes) { const a = document.createElement('a'); a.href = `api/download?id=${encodeURIComponent(id)}&path=${encodeURIComponent(p)}`; a.download = ''; document.body.append(a); a.click(); a.remove(); await new Promise(r => setTimeout(r, 400)); } return null; },
     'file:save': async (name, text) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/octet-stream' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); return name; },

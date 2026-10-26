@@ -681,3 +681,12 @@ body.mobile .ed-ta { user-select: text; -webkit-user-select: text; }
 body.mobile input, body.mobile textarea, body.mobile select { font-size: 16px; }
 body.mobile .ed-gut, body.mobile .ed-ta { font-size: 16px !important; }
 .ios-note { display: block; margin-top: 8px; }
+
+/* Save split button + Use sudo in files */
+.split-btn { position: relative; display: inline-flex; align-items: stretch; }
+.split-btn > .primary { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split-btn > .split-caret { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid rgba(255,255,255,.25); padding: 0 10px; min-width: 0; }
+.split-menu { position: absolute; right: 0; bottom: calc(100% + 4px); background: var(--panel, #1a1d27); border: 1px solid var(--border, #2a2f3d); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 40; min-width: 140px; padding: 4px; }
+.split-menu button { display: block; width: 100%; text-align: left; background: transparent; border: 0; color: inherit; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+.split-menu button:hover { background: var(--hover, rgba(255,255,255,.06)); }
+.fhead2 label.row { align-items: center; white-space: nowrap; }

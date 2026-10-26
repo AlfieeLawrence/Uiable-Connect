@@ -22,7 +22,7 @@ Everything starts with a saved connection in the sidebar.
    - Password  
    - SSH private key (paste or choose a file) with optional passphrase  
    - **Key + password** — key tried first, password as fallback  
-5. Optional **sudo password** for installs and admin commands on that server.  
+5. Optional **sudo password** for installs, admin commands, and **Files → Use sudo** / **Save as sudo** on that server.  
 6. **Test**, then save.
 
 On first SSH connect, desktop shows the server’s **SHA256 host key fingerprint** for you to confirm. If the key changes later, Connect blocks the session until you **Trust new key**.
