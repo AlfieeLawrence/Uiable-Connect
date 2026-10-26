@@ -638,8 +638,12 @@ environment:
 }
 (async () => { const t = termTheme(); document.documentElement.style.setProperty('--tbg', t.background); // restore terminal theme
   setTimeout(() => $('#boot')?.classList.add('gone'), 6000); // never trap the UI behind the splash
-  APP = await uc.call('app:info').catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' })); await refresh(); $('#boot')?.classList.add('gone');
-  if (APP.platform === 'web') { if (!APP.hostNet && localStorage.getItem('uc.hn.dismiss') !== '1') hnShow(); setInterval(hnPoll, 30000); } })();
+  try {
+    APP = await (window.uc ? uc.call('app:info') : Promise.reject()).catch(() => ({ platform: ON_MOBILE ? 'mobile' : 'desktop' }));
+    await refresh();
+  } catch (e) { console.error(e); try { renderMain(); } catch (_) {} }
+  $('#boot')?.classList.add('gone');
+  if (APP && APP.platform === 'web') { if (!APP.hostNet && localStorage.getItem('uc.hn.dismiss') !== '1') hnShow(); setInterval(hnPoll, 30000); } })();
 
 // ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure
 (async function checkUpdate() {

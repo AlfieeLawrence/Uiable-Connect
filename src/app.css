@@ -14,7 +14,12 @@
 
 /* ---------- app shell ---------- */
 #layout {
-  display: flex; height: 100vh; height: 100dvh; height: var(--vvh, 100dvh);
+  display: flex;
+  /* Prefer measured --vvh (set by mobile.js). Never let a broken 100dvh (0 in some WKWebViews) wipe 100vh. */
+  height: 100vh;
+  height: var(--vvh, 100vh);
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
   padding-left: var(--sal); padding-right: var(--sar);
   overflow: hidden;
 }

@@ -81,6 +81,13 @@
   new MutationObserver(() => document.querySelectorAll('.modal .body > p.muted.small').forEach(p => { if (/DPAPI|Windows/.test(p.textContent)) p.textContent = `Passwords and keys are encrypted with ${M.platform === 'ios' ? 'the iOS Keychain' : 'the Android Keystore'} and never leave this device.`; }))
     .observe(body, { childList: true });
   // on-screen keyboard resizes the viewport: refit the terminal
-  if (window.visualViewport) visualViewport.addEventListener('resize', () => { document.documentElement.style.setProperty('--vvh', visualViewport.height + 'px'); window.dispatchEvent(new Event('resize')); });
+  // iOS WKWebView often reports 100dvh as 0 until a resize; set --vvh immediately so #layout is not height:0 after #boot hides.
+  const syncVvh = () => {
+    const h = (window.visualViewport && visualViewport.height) || window.innerHeight || document.documentElement.clientHeight;
+    if (h) document.documentElement.style.setProperty('--vvh', h + 'px');
+  };
+  syncVvh();
+  if (window.visualViewport) visualViewport.addEventListener('resize', () => { syncVvh(); window.dispatchEvent(new Event('resize')); });
+  window.addEventListener('resize', syncVvh);
   decorate();
 })();
