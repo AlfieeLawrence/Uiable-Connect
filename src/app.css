@@ -184,8 +184,16 @@ html[data-theme="light"] .gtag { color: var(--accent); }
 .pcx:hover { opacity: 1; color: var(--danger); }
 
 /* ---------- empty ---------- */
+.pane-head.empty-head {
+  min-height: 0; padding: 0; margin: 0;
+  justify-content: flex-start;
+  align-items: center;
+}
+.pane-head.empty-head:empty { display: none; } /* desktop: no burger, hide empty bar */
+body.mobile .pane-head.empty-head:empty,
+body.mobile .pane-head.empty-head { display: flex; }
 .empty {
-  display: grid; place-items: center; height: 100%; min-height: 240px;
+  display: grid; place-items: center; flex: 1; min-height: 240px;
   text-align: center; padding: 28px 16px; color: var(--text);
 }
 .empty h1 { font-size: 28px; margin-bottom: 8px; letter-spacing: -.03em; color: var(--text); }
@@ -332,6 +340,44 @@ tr.hcur td { background: rgba(124,92,255,.08); }
 .pickrow:hover { background: rgba(255,255,255,.05); }
 .pickrow input { width: auto; }
 
+
+/* phone tab icons */
+.tabs .seg button .ticon {
+  width: 18px; height: 18px; display: none;
+  stroke: currentColor; fill: none; stroke-width: 1.75;
+  stroke-linecap: round; stroke-linejoin: round;
+  opacity: .72; flex-shrink: 0;
+}
+.tabs .seg button .tlab { display: inline; }
+.tabs .seg button.active .ticon { opacity: 1; color: var(--accent); }
+@media (max-width: 760px) {
+  .tabs .seg button .ticon { display: block; margin: 0 auto 1px; }
+  .tabs .seg button .tlab { font-size: 10.5px; line-height: 1.1; }
+  body.mobile .tabs .seg button .ticon { display: block; }
+}
+body.mobile .tabs .seg button .ticon { display: block; margin: 0 auto 1px; color: var(--muted); }
+body.mobile .tabs .seg button.active .ticon { color: var(--accent); opacity: 1; }
+body.mobile .tabs .seg button.active .tlab { color: var(--accent); }
+
+.picklist-body { max-height: min(52vh, 420px); overflow: auto; padding: 4px 0 !important; }
+.pickrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; cursor: pointer; min-height: 44px;
+  border-bottom: 1px solid var(--border2);
+}
+.pickrow:last-child { border-bottom: 0; }
+.pickrow:hover, .pickrow:focus {
+  background: rgba(124,92,255,.12); outline: none;
+}
+.pickrow .pip {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: rgba(124,92,255,.16); color: var(--accent);
+  font-size: 12px; font-weight: 700;
+}
+.pickrow .pip-host { font-weight: 600; letter-spacing: -.01em; }
+.pickrow .pip-sub { font-size: 12px; color: var(--muted); }
+
 /* ---------- light-theme counterparts ---------- */
 html[data-theme="light"] .srv:hover { background: rgba(15,20,40,.06); }
 html[data-theme="light"] .srv.active { background: rgba(124,92,255,.12); }
@@ -348,7 +394,72 @@ html[data-theme="light"] .termhost { border-color: rgba(15,20,40,.12); }
 html[data-theme="light"] .pickrow:hover { background: rgba(15,20,40,.05); }
 
 /* =========================================================
-   TABLET  (<= 960px)
+   
+/* ---------- light theme: shell / panes / bars ---------- */
+html[data-theme="light"] #boot { background: var(--bg); }
+html[data-theme="light"] #main { background: transparent; }
+html[data-theme="light"] .card {
+  background: var(--card-solid);
+  border: 1px solid var(--border2);
+  box-shadow: 0 1px 2px rgba(30,40,80,.04);
+}
+html[data-theme="light"] .srv:hover { background: rgba(20,24,40,.05); }
+html[data-theme="light"] .srv.active {
+  background: rgba(107,76,255,.12);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+html[data-theme="light"] .brand b { color: var(--text); }
+html[data-theme="light"] .side-foot { border-top-color: var(--border2); }
+html[data-theme="light"] #panes.split .pane {
+  background: rgba(255,255,255,.72);
+  border-color: var(--border2);
+}
+html[data-theme="light"] .pane-head button:not(.primary):not(.danger),
+html[data-theme="light"] .burger {
+  background: #fff;
+  border-color: rgba(20,24,40,.14);
+}
+html[data-theme="light"] .termhost {
+  background: var(--tbg, #fafbfe);
+  border: 1px solid rgba(20,24,40,.12);
+}
+html[data-theme="light"] .tabs .seg {
+  background: rgba(20,24,40,.05);
+}
+html[data-theme="light"] #updBar, html[data-theme="light"] #hnBar {
+  background: #fff;
+  border: 1px solid var(--border2);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+html[data-theme="light"] table.list th {
+  color: var(--muted);
+  border-bottom-color: var(--border2);
+}
+html[data-theme="light"] table.list td { border-bottom-color: var(--border2); }
+html[data-theme="light"] .empty h1 { color: var(--text); }
+html[data-theme="light"] .fcols.two .fpane,
+html[data-theme="light"] .hitem,
+html[data-theme="light"] .arule,
+html[data-theme="light"] .snip {
+  background: #f7f8fc;
+  border-color: var(--border2);
+}
+html[data-theme="light"] .stat-big { color: var(--text); }
+html[data-theme="light"] #toasts > * {
+  background: #fff;
+  border: 1px solid var(--border2);
+  color: var(--text);
+}
+@media (max-width: 760px) {
+  html[data-theme="light"] .tabs .seg {
+    background: rgba(255,255,255,.94);
+    border-top-color: var(--border2);
+  }
+  html[data-theme="light"] #side { background: #fff; }
+}
+
+TABLET  (<= 960px)
    ========================================================= */
 @media (max-width: 960px) {
   :root { --side-w: 220px; }

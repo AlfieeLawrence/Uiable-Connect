@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu, Notificat
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock } = require('./lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock, listDockerPs } = require('./lib/core');
 const os = require('os');
 const net = require('net');
 const { Store } = require('./lib/store');
@@ -203,6 +203,7 @@ const latestUiable = async () => { const r = await fetch('https://api.github.com
   return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; };
 h('uiable:latest', latestUiable);
 h('app:version', () => app.getVersion());
+h('app:focusWin', () => { if (!win || win.isDestroyed()) return false; if (win.isMinimized()) win.restore(); win.show(); win.focus(); try { win.webContents.focus(); } catch (_) {} return true; });
 h('app:info', () => ({ platform: 'desktop', os: process.platform }));
 h('app:open', url => { if (/^https:\/\/github\.com\//.test(url)) shell.openExternal(url); });
 h('history:list', n => hist ? hist.list(Math.min(Number(n) || 300, 2000)) : []);
@@ -247,8 +248,10 @@ h('net:wol', id => new Promise((res, rej) => { const s = store.full(id); const m
 h('net:ping', id => new Promise(r => { const s = store.full(id); if (!s.host) return r(null); const t = Date.now();
   const k = net.connect({ host: s.host, port: Number(s.port) || 22, timeout: 3000 });
   k.once('connect', () => { k.destroy(); r(Date.now() - t); }); k.once('error', () => r(null)); k.once('timeout', () => { k.destroy(); r(null); }); }));
-h('docker:ps', async id => { const r = await S(id).exec("docker ps --format '{{.Names}}|{{.Image}}' 2>/dev/null");
-  return r.code ? [] : r.out.trim().split('\n').filter(Boolean).map(l => { const [name, image] = l.split('|'); return { name, image }; }); });
+h('docker:ps', async id => {
+  const srv = store.full(id);
+  return listDockerPs(S(id), { sudoPw: srv.sudoPassword || srv.password || null });
+});
 h('fs:upload', async (id, locals, dir) => { for (const l of locals) await S(id).upload(l, dir, pr => send('ev', { id, ev: 'progress', ...pr })); log(id, 'upload', `${locals.length} item(s) -> ${dir}`); return true; });
 h('fs:download', async (id, remotes) => {
   const r = await dialog.showOpenDialog(win, { title: 'Download to…', properties: ['openDirectory', 'createDirectory'] });

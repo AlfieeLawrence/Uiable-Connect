@@ -9,6 +9,15 @@ const pdir = p => p.replace(/\/[^/]+\/?$/, '') || '/';
 function toast(msg, err) { const t = el(`<div class="toast ${err ? 'err' : ''}">${esc(msg)}</div>`); $('#toasts').append(t); setTimeout(() => t.remove(), err ? 6000 : 3000); }
 const call = (...a) => uc.call(...a).catch(e => { toast(e.message, true); throw e; });
 
+/** Bring the Electron window forward and focus the first field in a modal (xterm steals focus otherwise). */
+function focusModal(m) {
+  try { uc.call('app:focusWin').catch(() => {}); } catch (_) {}
+  requestAnimationFrame(() => {
+    const f = m && m.querySelector('input:not([type=hidden]), select, textarea, button.primary, button');
+    if (f && typeof f.focus === 'function') f.focus();
+  });
+}
+
 // ---------- app state: split view = up to two panes, each a (server, tab) pair
 let servers = [], APP = { platform: 'desktop' };
 const st = {}; // per-server UI state
@@ -112,7 +121,7 @@ function renderMain() {
 function renderPane(sec, p, i) {
   const s = servers.find(x => x.id === p.srv);
   if (!s) {
-    sec.innerHTML = `<div class="empty"><div><h1>Uiable Connect</h1><p class="muted">Add a connection to open a terminal, browse files, check health and forward ports.<br>Works with or without Uiable on the server.</p><button class="primary" data-act="add">+ Add connection</button></div></div>`;
+    sec.innerHTML = `<div class="pane-head empty-head"></div><div class="empty"><div><h1>Uiable Connect</h1><p class="muted">Add a connection to open a terminal, browse files, check health and forward ports.<br>Works with or without Uiable on the server.</p><button class="primary" data-act="add">+ Add connection</button></div></div>`;
     return;
   }
   const u = S(s.id), tabs = TABS(s);
@@ -120,7 +129,18 @@ function renderPane(sec, p, i) {
     ${panes.length > 1 ? '<button class="sm" id="pclose" title="Close this pane">✕</button>' : ''}
     ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side">⿻</button>' : ''}
     <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : `${s.mac ? '<button class="sm" id="wake" title="Send a Wake-on-LAN packet">⚡ Wake</button>' : ''}<button class="primary sm" id="conn">Connect</button>`}</div>
-    <div class="tabs"><div class="seg">${tabs.map(t => { const label = ON_MOBILE ? ({ overview:'Home', terminal:'Term', files:'Files', forwards:'Ports', health:'Health', alerts:'Alerts', history:'Hist' }[t] || t) : (t[0].toUpperCase() + t.slice(1)); return `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}" title="${t}">${label}</button>`; }).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
+    <div class="tabs"><div class="seg">${tabs.map(t => { const short = ({ overview:'Home', terminal:'Term', files:'Files', forwards:'Ports', health:'Health', alerts:'Alerts', history:'Hist' }[t] || t);
+    const label = ON_MOBILE ? short : (t[0].toUpperCase() + t.slice(1));
+    const icon = ON_MOBILE ? ({
+      overview: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>',
+      terminal: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5 10 12 4 17.5M12 18h8"/></svg>',
+      files: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5V19a1.5 1.5 0 0 0 1.5 1.5h14A1.5 1.5 0 0 0 20.5 19V9.5A1.5 1.5 0 0 0 19 8h-7.2L9.5 5.5H5A1.5 1.5 0 0 0 3.5 7.5z"/></svg>',
+      forwards: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10M17 7l-3-3M17 7l-3 3M17 17H7M7 17l3-3M7 17l3 3"/></svg>',
+      health: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h3.5l2-5 3 10 2.5-5H21"/></svg>',
+      alerts: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17h12l-1.2-2.2a6.2 6.2 0 0 1-1.3-3.7V9a4.5 4.5 0 1 0-9 0v2.1c0 1.3-.45 2.6-1.3 3.7L6 17zm4.2 1.2a2 2 0 0 0 3.6 0"/></svg>',
+      history: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3.2 2"/></svg>',
+    }[t] || '') : '';
+    return `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}" title="${t}">${icon}<span class="tlab">${label}</span></button>`; }).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
     <div class="view" id="view"></div>`;
   $('#edit', sec).onclick = () => editServer(s);
   if ($('#conn', sec)) $('#conn', sec).onclick = () => connect(s.id);
@@ -143,7 +163,7 @@ function trustPrompt(s, k) { return new Promise(res => {
     <p class="muted small" style="margin-bottom:4px">${k.changed ? 'Previously trusted' : ''}</p>${k.changed ? `<p class="mono small" style="overflow-wrap:anywhere">${esc(s.hostKey || '')}</p><p class="muted small" style="margin-bottom:4px">Now offered</p>` : '<p class="muted small" style="margin-bottom:4px">SHA256 fingerprint</p>'}
     <p class="mono" style="overflow-wrap:anywhere;font-size:14px">${esc(k.fp)}</p></div>
     <footer><span class="spacer"></span><button id="c">Cancel</button><button class="${k.changed ? 'danger' : 'primary'}" id="ok">${k.changed ? 'Trust new key' : 'Trust and connect'}</button></footer></div></div>`);
-  document.body.append(m); m.querySelector('#c').onclick = () => { m.remove(); res(false); }; m.querySelector('#ok').onclick = () => { m.remove(); res(true); }; }); }
+  document.body.append(m); focusModal(m); m.querySelector('#c').onclick = () => { m.remove(); res(false); }; m.querySelector('#ok').onclick = () => { m.remove(); res(true); }; }); }
 async function connect(id) {
   const s = servers.find(x => x.id === id); const btns = document.querySelectorAll('#conn'); btns.forEach(b => { b.disabled = true; b.textContent = 'Connecting…'; });
   try { try { await uc.call('conn:connect', id); }
@@ -157,7 +177,22 @@ async function connect(id) {
 function uiPill(sec, s, u) {
   const p = $('#uiPill', sec); if (!p) return;
   if (!s.connected || !isSsh(s)) { p.innerHTML = ''; return; }
-  if (!u.uiable) { p.innerHTML = '<span class="pill">Checking for Uiable…</span>'; return; }
+  if (!u.uiable) {
+    p.innerHTML = '<span class="pill">Checking for Uiable…</span>';
+    // Already-connected sessions (e.g. restored panes) never go through connect(), so kick off detect once
+    if (!u._uiDetecting) {
+      u._uiDetecting = true;
+      Promise.resolve(uc.call('uiable:detect', s.id)).then(d => {
+        u.uiable = d || { reachable: false }; u._uiDetecting = false;
+        if (anyPane(s.id)) renderMain();
+      }).catch(e => {
+        console.warn('uiable:detect failed', e);
+        u.uiable = { reachable: false }; u._uiDetecting = false;
+        if (anyPane(s.id)) renderMain();
+      });
+    }
+    return;
+  }
   p.innerHTML = u.uiable.reachable
     ? `<span class="pill ok">● Uiable${u.uiable.version ? ' ' + esc(u.uiable.version) : ''} on :${u.uiable.port}</span> <button class="primary sm" id="openUi">Open Uiable dashboard</button> <button class="sm" id="openUiB" title="Open in your browser">Browser</button>`
     : `<span class="pill">Uiable not found on this server · SSH features only</span>`;
@@ -187,6 +222,30 @@ function vOverview(s, u, v) {
 }
 
 // ---------- Terminal (tabs persist while connected; tmux keeps sessions alive on the server)
+const THEME_KEY = 'uc.theme';
+const APP_THEMES = ['dark', 'light', 'solarized', 'dracula', 'monokai'];
+const resolvedTheme = (pref) => {
+  const p = pref || localStorage.getItem(THEME_KEY) || 'dark';
+  if (p === 'system') return (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  return APP_THEMES.includes(p) ? p : 'dark';
+};
+const applyTheme = (pref) => {
+  if (pref != null) localStorage.setItem(THEME_KEY, pref);
+  const resolved = resolvedTheme();
+  document.documentElement.setAttribute('data-theme', resolved);
+  // Keep terminal chrome in sync when user hasn't picked a terminal theme explicitly after app theme
+  // (terminal select still overrides via uc.ttheme).
+  return resolved;
+};
+applyTheme(); // apply persisted app theme as soon as app.js runs
+if (window.matchMedia) {
+  try {
+    matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+      if ((localStorage.getItem(THEME_KEY) || 'dark') === 'system') applyTheme();
+    });
+  } catch (_) {}
+}
+
 const TERM_THEMES = {
   dark: { background: '#0b0d14', foreground: '#e8eaf2', cursor: '#7c5cff' },
   light: { background: '#fafbfe', foreground: '#1a1c26', cursor: '#5b3df5' },
@@ -205,7 +264,7 @@ function vTerminal(s, u, v) {
     $('#ttabs').querySelectorAll('button').forEach(b => b.onclick = (e) => { if (e.target.dataset.x) { uc.send('shell:close', s.id, e.target.dataset.x); return; } u.activeTerm = b.dataset.s; show(); });
   };
   const show = () => { draw(); const h = $('#th'); [...h.children].forEach(c => c.style.display = 'none'); const t = u.terms.find(t => t.sid === u.activeTerm); if (!t) return;
-    if (t.node.parentNode !== h) h.append(t.node); t.node.style.display = ''; requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); }); };
+    if (t.node.parentNode !== h) h.append(t.node); t.node.style.display = ''; requestAnimationFrame(() => { t.fit.fit(); if (!document.querySelector(".modal-bg")) t.term.focus(); }); };
   const newT = async (runCmd, label) => {
     const sid = 't' + Date.now() + Math.floor(Math.random() * 999); const node = document.createElement('div');
     const term = new Terminal({ fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: 14, cursorBlink: true, scrollback: 3000, theme: termTheme() });
@@ -231,7 +290,10 @@ function vTerminal(s, u, v) {
   fbi.oninput = () => find(1); fbi.onkeydown = e => { if (e.key === 'Enter') find(e.shiftKey ? -1 : 1); if (e.key === 'Escape') u.search.close(); };
   $('#newT').onclick = () => newT(); u.newT = newT; u.redrawTerms = show;
   const tm = $('#tmuxT'); if (tm) tm.onclick = () => newT('tmux new-session -A -s uiable || tmux new-session -s uiable', 'tmux');
-  const dk = $('#dockT', v); if (dk) dk.onclick = async () => { const cs = await call('docker:ps', s.id);
+  const dk = $('#dockT', v); if (dk) dk.onclick = async () => {
+    let cs;
+    try { cs = await call('docker:ps', s.id); }
+    catch (e) { return toast(e.message || String(e), true); }
     if (!cs.length) return toast('No running containers on this server', true);
     const c = cs.length === 1 ? cs[0].name : await pickList('Shell into container', cs.map(x => x.name + '  ·  ' + x.image), cs.map(x => x.name));
     if (c) newT(`docker exec -it ${c} bash 2>/dev/null || docker exec -it ${c} sh`, '◫ ' + c); };
@@ -331,20 +393,25 @@ document.addEventListener('keydown', e => {
   else if (k === 'f') { e.preventDefault(); u.search && u.search.open(); }
   else if (/^[1-9]$/.test(e.key)) { const i = +e.key - 1; if (u.terms[i]) { e.preventDefault(); u.activeTerm = u.terms[i].sid; u.redrawTerms && u.redrawTerms(); } }
 });
-function pickList(title, labels, vals) { return new Promise(res => { // tiny chooser: click a row -> returns vals[i]
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:420px"><header><h3>${esc(title)}</h3></header><div class="body" style="padding:8px 0">
-    ${labels.map((l, i) => `<div class="pickrow" data-i="${i}">${esc(l)}</div>`).join('')}</div><footer><span class="spacer"></span><button id="c">Cancel</button></footer></div></div>`);
-  document.body.append(m); m.querySelector('#c').onclick = () => { m.remove(); res(null); };
-  m.querySelectorAll('.pickrow').forEach(r => r.onclick = () => { const v = vals[r.dataset.i]; m.remove(); res(v); }); }); }
-function pickChecks(labels, vals) { return new Promise(res => { // checkbox chooser -> returns vals[]
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:460px"><header><h3>Import from ~/.ssh/config</h3></header><div class="body" style="padding:8px 0">
-    ${labels.map((l, i) => `<label class="pickrow"><input type="checkbox" data-i="${i}" checked> ${esc(l)}</label>`).join('')}</div>
-    <footer><span class="spacer"></span><button id="c">Cancel</button><button class="primary" id="o">Import selected</button></footer></div></div>`);
-  document.body.append(m); m.querySelector('#c').onclick = () => { m.remove(); res(null); };
-  m.querySelector('#o').onclick = () => { const out = [...m.querySelectorAll('input:checked')].map(x => vals[x.dataset.i]); m.remove(); res(out); }; }); }
+function pickList(title, labels, vals) { return new Promise(res => { // chooser: click a row -> vals[i]; shows EVERY option
+  const rows = labels.map((l, i) => {
+    const main = typeof l === 'string' ? l : (l.main || String(l));
+    const sub = typeof l === 'object' && l.sub ? `<div class="pip-sub">${esc(l.sub)}</div>` : '';
+    return `<div class="pickrow" data-i="${i}" role="button" tabindex="0"><span class="pip">${i + 1}</span><div><div class="pip-host">${esc(main)}</div>${sub}</div></div>`;
+  }).join('');
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:440px"><header><h3>${esc(title)}</h3></header><div class="body picklist-body">${rows || '<p class="muted" style="padding:12px 16px">Nothing to pick</p>'}</div><footer><span class="spacer"></span><button id="c">Cancel</button></footer></div></div>`);
+  document.body.append(m); focusModal(m);
+  m.querySelector('#c').onclick = () => { m.remove(); res(null); };
+  const choose = i => { const v = vals[i]; m.remove(); res(v); };
+  m.querySelectorAll('.pickrow').forEach(r => {
+    r.onclick = () => choose(+r.dataset.i);
+    r.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(+r.dataset.i); } };
+  });
+}); }
+
 function prompt2(title, val = '', pw = false) { return new Promise(res => {
   const m = el(`<div class="modal-bg"><div class="modal"><header><h3>${esc(title)}</h3></header><div class="body"><input ${pw ? 'type="password"' : ''}></div><footer><button id="c">Cancel</button><button class="primary" id="o">OK</button></footer></div></div>`);
-  document.body.append(m); const i = m.querySelector('input'); i.value = val; if (!pw) i.select(); i.focus();
+  document.body.append(m); focusModal(m); const i = m.querySelector('input'); i.value = val; if (!pw) i.select(); i.focus();
   const done = v => { m.remove(); res(v); }; m.querySelector('#c').onclick = () => done(null); m.querySelector('#o').onclick = () => done(i.value.trim());
   i.onkeydown = e => { if (e.key === 'Enter') done(i.value.trim()); if (e.key === 'Escape') done(null); }; }); }
 
@@ -424,7 +491,7 @@ function editServer(s = {}) {
     <p class="muted small">Passwords and keys are encrypted on this device and never leave it. With "Key + password" the key is tried first and the password is the fallback.</p><div id="tr" class="small"></div>
     </div></div>
     <footer>${s.id ? '<button class="danger" id="del">Delete</button><span class="spacer"></span>' : ''}<button id="c">Cancel</button><button id="t">Test</button><button id="ts">Test sudo</button><button class="primary" id="sv">Save</button></footer></div></div>`);
-  document.body.append(m); let a = auth, ctype = ct, keyName = s.keyName;
+  document.body.append(m); focusModal(m); let a = auth, ctype = ct, keyName = s.keyName;
   const setC = x => { ctype = x; m.querySelectorAll('[data-c]').forEach(b => b.classList.toggle('active', b.dataset.c === x));
     m.querySelector('#ctSsh').classList.toggle('hidden', x !== 'ssh'); m.querySelector('#ctSer').classList.toggle('hidden', x !== 'serial');
     m.querySelector('#ctNet').classList.toggle('hidden', x === 'serial' || x === 'local'); m.querySelector('#ctLoc').classList.toggle('hidden', x !== 'local');
@@ -433,10 +500,18 @@ function editServer(s = {}) {
     if (x === 'serial') ports(); };
   m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => setC(b.dataset.c)); setC(canTelnet || canSerial || canLocal ? ct : 'ssh');
   const sc = m.querySelector('#scan'); if (sc) sc.onclick = async () => { sc.disabled = true; sc.textContent = 'Scanning…';
-    try { const ips = await uc.call('net:scan');
+    try {
+      const ips = [...new Set(await uc.call('net:scan') || [])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
       if (!ips.length) return toast('Nothing with SSH open found on this network', true);
-      const ip = ips.length === 1 ? ips[0] : await pickList('SSH hosts on your network', ips, ips);
-      if (ip) m.querySelector('#h').value = ip;
+      if (ips.length === 1) {
+        m.querySelector('#h').value = ips[0];
+        toast('Found ' + ips[0]);
+      } else {
+        // Always list every host — never auto-pick the first when there are several
+        const labels = ips.map(ip => ({ main: ip, sub: 'SSH · port 22' }));
+        const ip = await pickList('SSH hosts on your network (' + ips.length + ')', labels, ips);
+        if (ip) { m.querySelector('#h').value = ip; toast('Selected ' + ip); }
+      }
     } catch (e) { toast(e.message, true); } finally { sc.disabled = false; sc.textContent = 'Find on my network'; } };
   const imp = m.querySelector('#impSsh'); if (imp) imp.onclick = async () => {
     try { const list = await uc.call('servers:importSsh');
@@ -485,7 +560,7 @@ function quickDialog() {
     <div class="row"><label class="field grow"><span>Username</span><input id="qu" placeholder="root"></label>
     <label class="field grow"><span>Password</span><input id="qp" type="password"></label></div><div id="qr" class="small"></div></div>
     <footer><span class="spacer"></span><button id="c">Cancel</button><button class="primary" id="o">Connect</button></footer></div></div>`);
-  document.body.append(m); const $i = q => m.querySelector(q);
+  document.body.append(m); focusModal(m); const $i = q => m.querySelector(q);
   $i('#qh').focus(); m.querySelector('#c').onclick = () => m.remove();
   const parse = () => { const [a, rest] = $i('#qh').value.trim().split('@'); const hasU = !!rest; const [host, port] = (rest || a).split(':');
     return { host: host || '', port: port || 22, username: (hasU ? a : '') || $i('#qu').value.trim() || 'root', password: $i('#qp').value }; };
@@ -500,12 +575,21 @@ function quickDialog() {
   $i('#o').onclick = go; $i('#qp').onkeydown = e => e.key === 'Enter' && go(); $i('#qh').onkeydown = e => e.key === 'Enter' && go();
 }
 function settingsDialog() {
-  const cur = localStorage.getItem('uc.ttheme') || 'dark';
+  const curT = localStorage.getItem('uc.ttheme') || 'dark';
+  const curA = localStorage.getItem(THEME_KEY) || 'dark';
+  const themes = [['dark', 'Dark'], ['light', 'Light'], ['solarized', 'Solarized'], ['dracula', 'Dracula'], ['monokai', 'Monokai'], ['system', 'System']];
   const m = el(`<div class="modal-bg"><div class="modal" style="width:400px"><header><h3>Settings</h3></header><div class="body">
-    <label class="field"><span>Terminal theme</span><select id="tt">${Object.keys(TERM_THEMES).map(t => `<option value="${t}" ${t === cur ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></label>
-    <p class="muted small">Applies to open terminals straight away and all new tabs.</p></div>
+    <label class="field"><span>App theme</span><select id="th">${themes.map(([v, l]) => `<option value="${v}" ${v === curA ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label class="field"><span>Terminal theme</span><select id="tt">${Object.keys(TERM_THEMES).map(t => `<option value="${t}" ${t === curT ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></label>
+    <p class="muted small">App theme colours the whole UI (including Solarized, Dracula and Monokai). Picking an app theme also matches the terminal; you can still override the terminal below. Both save on this device.</p></div>
     <footer><span class="spacer"></span><button class="primary" id="o">Done</button></footer></div></div>`);
-  document.body.append(m);
+  document.body.append(m); focusModal(m);
+  m.querySelector('#th').onchange = e => {
+    applyTheme(e.target.value);
+    // Match terminal to app chrome when user flips app theme (still overridable below)
+    const r = resolvedTheme();
+    if (TERM_THEMES[r]) { m.querySelector('#tt').value = r; applyTermTheme(r); }
+  };
   m.querySelector('#tt').onchange = e => applyTermTheme(e.target.value);
   m.querySelector('#o').onclick = () => m.remove();
 }
@@ -559,12 +643,22 @@ environment:
 
 // ---- "new version available" banner: checks GitHub at most every 6 h, silent on any failure
 (async function checkUpdate() {
-  const K = 'uc.update', newer = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  const K = 'uc.update';
+  // Strip leading "v", ignore build/+meta and prerelease for the numeric compare; only show banner when remote is STRICTLY newer.
+  const verParts = (s) => String(s || '').trim().replace(/^v/i, '').split(/[+-]/)[0].split('.').map(p => parseInt(p, 10) || 0);
+  const newer = (a, b) => { const x = verParts(a), y = verParts(b); for (let i = 0; i < Math.max(x.length, y.length, 3); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+  const sameVer = (a, b) => { const x = verParts(a), y = verParts(b); const n = Math.max(x.length, y.length, 3); for (let i = 0; i < n; i++) if ((x[i] || 0) !== (y[i] || 0)) return false; return true; };
   try {
     let c = JSON.parse(localStorage.getItem(K) || 'null');
-    if (!c || Date.now() - c.t > 6 * 3600e3) { const r = await uc.call('app:update'); if (!r || !/^\d+\.\d+\.\d+$/.test(r.latest)) return; c = { t: Date.now(), ...r }; localStorage.setItem(K, JSON.stringify(c)); }
+    if (!c || Date.now() - c.t > 6 * 3600e3) { const r = await uc.call('app:update'); if (!r || !r.latest) return;
+      const latestNorm = String(r.latest).trim().replace(/^v/i, '').split(/[+-]/)[0];
+      if (!/^\d+\.\d+\.\d+$/.test(latestNorm)) return;
+      c = { t: Date.now(), ...r, latest: latestNorm, current: String(r.current || '').replace(/^v/i, '').split(/[+-]/)[0] || r.current }; localStorage.setItem(K, JSON.stringify(c)); }
     const cur = (await uc.call('app:version').catch(() => null)) || c.current;
-    if (!newer(c.latest, cur) || localStorage.getItem(K + '.dismissed') === c.latest) return;
+    const latest = String(c.latest || '').replace(/^v/i, '').split(/[+-]/)[0];
+    const curN = String(cur || '').replace(/^v/i, '').split(/[+-]/)[0];
+    if (!latest || sameVer(latest, curN) || !newer(latest, curN) || localStorage.getItem(K + '.dismissed') === latest) return;
+    c.latest = latest;
     const b = el(`<div id="updBar"><span>Uiable Connect ${esc(c.latest)} is available</span><button class="sm primary" id="updGo">Update</button><button class="sm" id="updX" title="Dismiss">✕</button></div>`);
     document.body.append(b);
     b.querySelector('#updGo').onclick = async () => { b.querySelector('#updGo').disabled = true; b.querySelector('#updGo').textContent = 'Working…';

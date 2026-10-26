@@ -55,9 +55,15 @@
 
   function decorate() {
     const m = document.getElementById('main');
-    const head = m.querySelector('.pane > .pane-head') || m.querySelector('.pane > .row') || m.querySelector(':scope > .row');
-    if (head && !head.querySelector('.burger')) head.prepend(burger());
-    if (!m.querySelector('.burger')) { const e = m.querySelector('.empty > div'); if (e) e.prepend(burger()); }
+    let head = m.querySelector('.pane > .pane-head') || m.querySelector('.pane > .row') || m.querySelector(':scope > .row');
+    // Never put the burger inside .empty (that block is vertically centred). Create a top bar if needed.
+    if (!head) {
+      const pane = m.querySelector('.pane') || m;
+      head = document.createElement('div');
+      head.className = 'pane-head empty-head';
+      pane.prepend(head);
+    }
+    if (!head.querySelector('.burger')) head.prepend(burger());
     const v = document.getElementById('view'); if (!v) return;
     if (v.querySelector('.termwrap')) termExtras(v);
     if (v.querySelector('.files')) filesExtras(v);

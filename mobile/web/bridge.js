@@ -173,20 +173,68 @@ else echo "@@$EB:$EP $O"; fi`, 15000).catch(() => ({ out: '' }));
       await startForward(id, f); const url = `http://127.0.0.1:${f.localPort}/`;
       if (native && P.Browser) await P.Browser.open({ url, presentationStyle: 'fullscreen', toolbarColor: '#0b0d14' }); else window.open(url);
       return url; },
-    'app:update': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
-      if (!r.ok) return null; const j = await r.json(); return { current: window.UC_VERSION || '0.0.0', latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url }; },
+    'app:update': async () => {
+      const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return null;
+      const j = await r.json();
+      let current = String(window.UC_VERSION || '').replace(/^v/i, '');
+      try {
+        if (native && P.App && P.App.getInfo) {
+          const info = await P.App.getInfo();
+          if (info && info.version) current = String(info.version).replace(/^v/i, '');
+        }
+      } catch (_) {}
+      if (!current) current = '0.0.0';
+      return { current, latest: String(j.tag_name || '').replace(/^v/i, '').split(/[+-]/)[0], url: j.html_url };
+    },
     'uiable:latest': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
       if (!r.ok) return null; const j = await r.json(); const a = (j.assets || []).find(x => x.name === 'uiable.zip');
       return { version: String(j.tag_name || '').replace(/^v/, ''), url: a ? a.browser_download_url : null, page: j.html_url }; },
-    'app:version': async () => window.UC_VERSION || '0.0.0',
+    'app:focusWin': async () => true,
+    'app:version': async () => {
+      try {
+        if (native && P.App && P.App.getInfo) {
+          const info = await P.App.getInfo();
+          if (info && info.version) return String(info.version).replace(/^v/i, '');
+        }
+      } catch (_) {}
+      return String(window.UC_VERSION || '0.0.0').replace(/^v/i, '');
+    },
     'app:info': async () => ({ platform: 'mobile', os: native ? Cap.getPlatform() : 'web' }),
     'app:selfupdate': async () => { const url = 'https://github.com/AlfieeLawrence/uiable-connect/releases/latest'; if (native && P.Browser) await P.Browser.open({ url }); else window.open(url); return { opened: true }; },
     'serial:list': async () => { throw new Error('Serial connections are not supported on phones/tablets'); },
     'net:scan': async () => { throw new Error('Network scan needs the desktop or Docker app'); },
     'net:wol': async () => { throw new Error('Wake-on-LAN needs the desktop or Docker app'); },
     'net:ping': async () => null,
-    'docker:ps': async id => { const r = await exec(id, "docker ps --format '{{.Names}}|{{.Image}}' 2>/dev/null", 10000);
-      return r.code ? [] : r.out.trim().split('\n').filter(Boolean).map(l => { const [name, image] = l.split('|'); return { name, image }; }); },
+    'docker:ps': async id => {
+      const parse = (out) => String(out || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+        const i = l.indexOf('|');
+        return i < 0 ? { name: l, image: '' } : { name: l.slice(0, i).trim(), image: l.slice(i + 1).trim() };
+      }).filter(x => x.name);
+      let lastErr = '';
+      for (const cmd of [
+        "docker ps --format '{{.Names}}|{{.Image}}'",
+        "docker ps --format '{{.Names}}'",
+        "bash -lc \"docker ps --format '{{.Names}}|{{.Image}}'\"",
+        "sudo -n docker ps --format '{{.Names}}|{{.Image}}'",
+      ]) {
+        try {
+          const r = await exec(id, cmd, 15000);
+          if (r.code === 0) return parse(r.out);
+          lastErr = (r.err || r.out || '').trim();
+        } catch (e) { lastErr = e.message || String(e); }
+      }
+      try {
+        const r = await H['sudo:exec'](id, "docker ps --format '{{.Names}}|{{.Image}}'");
+        if (r && r.code === 0) return parse(r.out);
+        if (r && !r.code && r.out) return parse(r.out);
+        lastErr = ((r && (r.err || r.out)) || lastErr || '').toString().trim();
+      } catch (e) { lastErr = e.message || lastErr; }
+      if (/permission denied|dial unix|docker\.sock|not in the.*docker|password is required/i.test(lastErr)) {
+        throw new Error('Docker is installed but this user cannot list containers (add the user to the docker group, or save a sudo password)');
+      }
+      return [];
+    },
     // sudo: the password file is opened by the shell then deleted; sudo reads it from the still-open fd.
     // With a saved password this never touches the JS side.
     'sudo:exec': async (id, cmd, pw) => { await load(); const srv = (id === '_sudot' ? null : full(id)) || {}; const usePw = pw || srv.sudoPassword || srv.password;

@@ -2,7 +2,7 @@
 // Uiable Connect for Docker: serves the same UI (../src) as a web app and implements the window.uc channels over
 // HTTP (POST /api/call, /api/send) + Server-Sent Events (/api/events), backed by lib/core.js (ssh2). No extra deps.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), os = require('os');
-const { makeSession, testConnection, testSudo, sudoExec, jumpSock } = require('../lib/core');
+const {makeSession, testConnection, testSudo, sudoExec, jumpSock, listDockerPs } = require('../lib/core');
 const net = require('net');
 const { Store } = require('../lib/store');
 const { History } = require('../lib/history');
@@ -97,6 +97,7 @@ const H = {
   'app:update': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null; const j = await r.json(); return { current: VERSION, latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url }; },
   'app:selfupdate': () => ({ docker: true }), // update = pull the new image; the UI shows the commands
+  'app:focusWin': async () => true,
   'app:version': () => VERSION,
   'app:info': () => ({ platform: 'web', os: 'docker', hostNet: HOST_NET, fwdPorts: HOST_NET ? [] : [...FWD_PORTS].sort((a, b) => a - b) }),
   'history:list': n => hist.list(Math.min(Number(n) || 300, 2000)),
@@ -128,8 +129,10 @@ const H = {
   'net:ping': id => new Promise(r => { const s = store.full(id); if (!s.host) return r(null); const t = Date.now();
     const k = net.connect({ host: s.host, port: Number(s.port) || 22, timeout: 3000 });
     k.once('connect', () => { k.destroy(); r(Date.now() - t); }); k.once('error', () => r(null)); k.once('timeout', () => { k.destroy(); r(null); }); }),
-  'docker:ps': async id => { const r = await S(id).exec("docker ps --format '{{.Names}}|{{.Image}}' 2>/dev/null");
-    return r.code ? [] : r.out.trim().split('\n').filter(Boolean).map(l => { const [name, image] = l.split('|'); return { name, image }; }); },
+  'docker:ps': async id => {
+    const srv = store.full(id);
+    return listDockerPs(S(id), { sudoPw: srv.sudoPassword || srv.password || null });
+  },
 };
 const SEND = { 'shell:write': (id, sid, d) => sessions.get(id)?.shellWrite(sid, d), 'shell:resize': (id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r), 'shell:close': (id, sid) => sessions.get(id)?.shellClose(sid) };
 
