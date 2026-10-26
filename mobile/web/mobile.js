@@ -7,7 +7,7 @@
 
   // ---- collapsible server drawer (phones) / collapsible sidebar (tablets)
   const side = document.getElementById('side');
-  const scrim = document.createElement('div'); scrim.id = 'scrim'; body.append(scrim);
+  let scrim = document.getElementById('scrim'); if (!scrim) { scrim = document.createElement('div'); scrim.id = 'scrim'; body.append(scrim); }
   const open = v => body.classList.toggle('drawer-open', v);
   scrim.onclick = () => open(false);
   side.addEventListener('click', e => { if (e.target.closest('.srv') && phone()) open(false); });

@@ -112,7 +112,7 @@ function renderMain() {
 function renderPane(sec, p, i) {
   const s = servers.find(x => x.id === p.srv);
   if (!s) {
-    sec.innerHTML = `<div class="empty"><div><h1>Uiable Connect</h1><p class="muted">Pick a connection on the left for a terminal, files, stats and tunnels.<br>Works with or without Uiable installed on it.</p><button class="primary" data-act="add">+ Add connection</button></div></div>`;
+    sec.innerHTML = `<div class="empty"><div><h1>Uiable Connect</h1><p class="muted">Add a connection to open a terminal, browse files, check health and forward ports.<br>Works with or without Uiable on the server.</p><button class="primary" data-act="add">+ Add connection</button></div></div>`;
     return;
   }
   const u = S(s.id), tabs = TABS(s);
@@ -120,7 +120,7 @@ function renderPane(sec, p, i) {
     ${panes.length > 1 ? '<button class="sm" id="pclose" title="Close this pane">✕</button>' : ''}
     ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side">⿻</button>' : ''}
     <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : `${s.mac ? '<button class="sm" id="wake" title="Send a Wake-on-LAN packet">⚡ Wake</button>' : ''}<button class="primary sm" id="conn">Connect</button>`}</div>
-    <div class="tabs"><div class="seg">${tabs.map(t => `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
+    <div class="tabs"><div class="seg">${tabs.map(t => { const label = ON_MOBILE ? ({ overview:'Home', terminal:'Term', files:'Files', forwards:'Ports', health:'Health', alerts:'Alerts', history:'Hist' }[t] || t) : (t[0].toUpperCase() + t.slice(1)); return `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}" title="${t}">${label}</button>`; }).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
     <div class="view" id="view"></div>`;
   $('#edit', sec).onclick = () => editServer(s);
   if ($('#conn', sec)) $('#conn', sec).onclick = () => connect(s.id);
@@ -132,7 +132,7 @@ function renderPane(sec, p, i) {
   uiPill(sec, s, u);
   ({ overview: vOverview, terminal: vTerminal, files: vFiles, forwards: vForwards, health: vHealth, alerts: vAlerts, history: vHistory })[p.tab](s, u, $('#view', sec), sec);
 }
-const notConn = s => `<div class="empty"><div><p class="muted">Not connected.</p><button class="primary" data-act="connect" data-id="${s.id}">Connect</button></div></div>`;
+const notConn = s => `<div class="empty"><div><p class="muted">This connection is offline.</p><button class="primary" data-act="connect" data-id="${s.id}">Connect</button></div></div>`;
 
 // ---------- host keys: trust on first use. Backends refuse an unknown/changed key before sending any password or key.
 const hostKeyErr = e => { const m = /HOSTKEY_(UNKNOWN|CHANGED) (SHA256:\S+)/.exec(e && e.message || ''); return m && { changed: m[1] === 'CHANGED', fp: m[2] }; };
