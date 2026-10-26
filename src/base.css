@@ -274,22 +274,30 @@ html[data-theme="light"] .modal-bg { background: rgba(30,40,80,.28); }
 }
 
 #toasts {
-  position: fixed; right: 16px; bottom: calc(16px + var(--sab));
+  position: fixed; right: 16px; bottom: calc(72px + var(--sab));
   left: auto; top: auto;
   display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
   z-index: 200; pointer-events: none; max-width: min(380px, calc(100vw - 24px));
 }
 #toasts > * { pointer-events: auto; }
 .toast {
+  display: flex; align-items: flex-start; gap: 10px;
   background: var(--card-solid); border: 1px solid var(--border2);
-  border-left: 3px solid var(--ok);
-  padding: 11px 14px; border-radius: 12px; box-shadow: var(--shadow);
+  border-left: 3px solid var(--accent);
+  padding: 10px 10px 10px 14px; border-radius: 12px; box-shadow: var(--shadow);
   max-width: 100%; animation: pop .2s ease; overflow-wrap: anywhere;
 }
 .toast.err { border-left-color: var(--danger); }
+.toast-msg { flex: 1 1 auto; min-width: 0; padding-top: 2px; }
+.toast-x {
+  flex: 0 0 auto; width: 28px; height: 28px; min-height: 28px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: var(--muted);
+  font-size: 14px; line-height: 1; cursor: pointer;
+}
+.toast-x:hover { background: var(--input); color: var(--text); }
 
 .ctx {
-  position: fixed; z-index: 1000; min-width: 168px;
+  position: fixed; z-index: 1000; min-width: 180px;
   background: var(--card-solid); border: 1px solid var(--border2);
   border-radius: 12px; padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.4);
   display: flex; flex-direction: column;
@@ -300,6 +308,9 @@ html[data-theme="light"] .modal-bg { background: rgba(30,40,80,.28); }
 }
 .ctx button:hover:not(:disabled) { background: var(--input); }
 .ctx button:disabled { opacity: .4; cursor: default; }
+.ctx-sep {
+  height: 1px; margin: 4px 8px; background: var(--border2); border: 0;
+}
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade { from { opacity: 0; } }

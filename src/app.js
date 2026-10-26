@@ -6,7 +6,13 @@ const fmtB = b => { if (b == null || isNaN(b)) return '–'; const u = ['B', 'KB
 const fmtUp = s => { if (!s) return '–'; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + 'd ' : '') + h + 'h ' + m + 'm'; };
 const pjoin = (a, b) => (a.endsWith('/') ? a : a + '/') + b;
 const pdir = p => p.replace(/\/[^/]+\/?$/, '') || '/';
-function toast(msg, err) { const t = el(`<div class="toast ${err ? 'err' : ''}">${esc(msg)}</div>`); $('#toasts').append(t); setTimeout(() => t.remove(), err ? 6000 : 3000); }
+function toast(msg, err) {
+  const t = el(`<div class="toast ${err ? 'err' : ''}" role="status"><span class="toast-msg">${esc(msg)}</span><button type="button" class="toast-x" title="Dismiss" aria-label="Dismiss">✕</button></div>`);
+  const kill = () => { clearTimeout(t._timer); t.remove(); };
+  t.querySelector('.toast-x').onclick = e => { e.stopPropagation(); kill(); };
+  $('#toasts').append(t);
+  t._timer = setTimeout(kill, err ? 9000 : 4500);
+}
 const call = (...a) => uc.call(...a).catch(e => { toast(e.message, true); throw e; });
 
 /** Bring the Electron window forward and focus the first field in a modal (xterm steals focus otherwise). */
@@ -61,24 +67,48 @@ function renderSide() {
     }
   }
 }
+function openSrvTab(s, tab) {
+  panes[focusPane].srv = s.id; const tabs = TABS(s);
+  panes[focusPane].tab = tabs.includes(tab) ? tab : tabs[0];
+  renderSide(); renderMain();
+}
 function srvMenu(x, y, s) {
+  const host = s.host || s.serialPath || s.name || '';
   ctxMenu(x, y, [
     s.connected ? ['Disconnect', async () => { S(s.id).userClosed = true; await call(s.quick ? 'servers:purgetemp' : 'conn:disconnect', s.id); refresh(); }]
       : ['Connect', () => connect(s.id)],
+    s.connected && isSsh(s) ? ['Open Home', () => openSrvTab(s, 'overview')] : null,
+    s.connected ? ['Open Terminal', () => openSrvTab(s, 'terminal')] : null,
+    s.connected && isSsh(s) ? ['Open Files', () => openSrvTab(s, 'files')] : null,
+    s.connected && isSsh(s) ? ['Open Ports', () => openSrvTab(s, 'forwards')] : null,
+    '---',
     s.mac && !s.connected ? ['⚡ Wake on LAN', () => call('net:wol', s.id).then(() => toast('Wake packet sent'))] : null,
+    host ? ['Copy host / path', () => clip.write(host).then(() => toast('Copied'))] : null,
+    s.username && s.host ? ['Copy user@host', () => clip.write(s.username + '@' + s.host).then(() => toast('Copied'))] : null,
+    '---',
     ['Edit', () => editServer(s)],
     ['Duplicate', async () => { await call('servers:dup', s.id); refresh(); }],
     s.hostKey ? ['Forget host key', async () => { await call('servers:clearhostkey', s.id); toast('Host key forgotten — it will be asked again on next connect'); refresh(); }] : null,
     ['Delete', async () => { if (!confirm(`Delete ${s.name || s.host}?`)) return; await call(s.quick ? 'servers:purgetemp' : 'servers:delete', s.id); delete st[s.id]; panes.forEach(p => { if (p.srv === s.id) p.srv = null; }); refresh(); }],
-  ].filter(Boolean));
+  ].filter(x => x != null));
 }
 // ---------- clipboard (Electron: native clipboard via preload; browser/mobile: navigator.clipboard)
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const clip = { read: async () => uc.clip ? uc.clip.read() : navigator.clipboard.readText(), write: async t => uc.clip ? uc.clip.write(t) : navigator.clipboard.writeText(t) };
 function ctxMenu(x, y, items) {
-  $('#ctx')?.remove(); const m = el('<div id="ctx" class="ctx"></div>');
-  for (const [label, fn, off] of items) { const b = el(`<button ${off ? 'disabled' : ''}>${label}</button>`); b.onclick = () => { m.remove(); Promise.resolve(fn()).catch(e => toast(e.message || 'Clipboard not available', true)); }; m.append(b); }
-  document.body.append(m); m.style.left = Math.min(x, innerWidth - m.offsetWidth - 4) + 'px'; m.style.top = Math.min(y, innerHeight - m.offsetHeight - 4) + 'px';
+  $('#ctx')?.remove(); const m = el('<div id="ctx" class="ctx" role="menu"></div>');
+  for (const it of items) {
+    if (it == null) continue;
+    if (it === '---' || it[0] === '---') { m.append(el('<div class="ctx-sep" role="separator"></div>')); continue; }
+    const [label, fn, off] = it;
+    const b = el(`<button type="button" ${off ? 'disabled' : ''}>${label}</button>`);
+    b.onclick = () => { m.remove(); Promise.resolve(fn && fn()).catch(e => toast(e.message || 'Clipboard not available', true)); };
+    m.append(b);
+  }
+  document.body.append(m);
+  const pad = 8;
+  m.style.left = Math.min(Math.max(pad, x), innerWidth - m.offsetWidth - pad) + 'px';
+  m.style.top = Math.min(Math.max(pad, y), innerHeight - m.offsetHeight - pad) + 'px';
   const close = e => { if (e.type === 'keydown' ? e.key === 'Escape' : !m.contains(e.target)) { m.remove(); off(); } };
   const off = () => { document.removeEventListener('pointerdown', close, true); document.removeEventListener('keydown', close, true); };
   setTimeout(() => { document.addEventListener('pointerdown', close, true); document.addEventListener('keydown', close, true); });
@@ -100,7 +130,49 @@ function termClipboard(term, node) {
 }
 
 // ---------- alerts: background stats poll for connected SSH servers with enabled rules (every 10 s, app open only)
-function onStats(s, x) { const u = S(s.id); u.stats = x; u.statsAt = Date.now(); for (const m of evalAlerts(s, x)) raiseAlert(s, m); }
+function onStats(s, x) {
+  const u = S(s.id); u.stats = x; u.statsAt = Date.now();
+  if (!u.statsSince) u.statsSince = Date.now();
+  u.statsHist ||= [];
+  const pct = (a, b) => (b ? Math.round(100 * a / b) : null);
+  u.statsHist.push({
+    t: Date.now(),
+    cpu: x.cpu == null ? null : +x.cpu,
+    mem: pct(x.memUsed, x.memTotal),
+    swap: pct(x.swapUsed, x.swapTotal),
+    load: x.load ? +x.load[0] : null,
+    gpu: x.gpu && x.gpu.util != null ? +x.gpu.util : null,
+    gpuMem: x.gpu ? pct(x.gpu.memUsed, x.gpu.memTotal) : null,
+    temp: x.temp == null ? null : +x.temp,
+    netRx: x.net && x.net.rx != null ? +x.net.rx : null,
+    netTx: x.net && x.net.tx != null ? +x.net.tx : null,
+    diskR: x.diskIO && x.diskIO.read != null ? +x.diskIO.read : null,
+    diskW: x.diskIO && x.diskIO.write != null ? +x.diskIO.write : null,
+  });
+  if (u.statsHist.length > 600) u.statsHist = u.statsHist.slice(-600);
+  for (const m of evalAlerts(s, x)) raiseAlert(s, m);
+}
+function sparkline(vals, w = 160, h = 40, stroke = 'var(--accent)') {
+  const pts = [];
+  let min = Infinity, max = -Infinity;
+  for (const v of vals) { if (v == null || isNaN(v)) continue; if (v < min) min = v; if (v > max) max = v; }
+  if (!isFinite(min)) return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"></svg>`;
+  if (max <= min) max = min + 1;
+  vals.forEach((v, i) => {
+    if (v == null || isNaN(v)) return;
+    const x = 1 + (i / Math.max(1, vals.length - 1)) * (w - 2);
+    const y = h - 2 - ((v - min) / (max - min)) * (h - 4);
+    pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+  });
+  if (pts.length < 2) return `<svg class="spark" width="${w}" height="${h}" aria-hidden="true"></svg>`;
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="${stroke}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" points="${pts.join(' ')}"/></svg>`;
+}
+function histStats(vals) {
+  const nums = vals.filter(v => v != null && !isNaN(v));
+  if (!nums.length) return { min: null, max: null, avg: null, last: null };
+  const sum = nums.reduce((a, b) => a + b, 0);
+  return { min: Math.min(...nums), max: Math.max(...nums), avg: sum / nums.length, last: nums[nums.length - 1] };
+}
 setInterval(async () => {
   for (const s of servers) {
     const u = S(s.id); if (!s.connected || !isSsh(s) || u.statsBusy || Date.now() - (u.statsAt || 0) < 9000) continue;
@@ -213,16 +285,58 @@ async function openUi(id, mode) { const u = S(id); if (u.uiOpening) return; u.ui
 // ---------- Overview / stats
 function vOverview(s, u, v) {
   if (!s.connected) { v.innerHTML = notConn(s); return; }
+  u.metricOpen ||= { cpu: true, mem: true, load: true, gpu: true, net: true, diskio: true, uptime: false, uiable: false, storage: true };
+  const fmtN = (n, d = 0) => n == null || isNaN(n) ? '–' : (+n).toFixed(d);
+  const fmtRate = n => n == null || isNaN(n) ? '–' : fmtB(n) + '/s';
+  const histBlock = (key, unit, stroke) => {
+    const hist = u.statsHist || [];
+    const vals = hist.map(h => h[key]);
+    const hs = histStats(vals);
+    const since = u.statsSince ? fmtUp(Math.max(1, (Date.now() - u.statsSince) / 1000)) : '–';
+    const show = (n) => {
+      if (n == null || isNaN(n)) return '–';
+      if (unit === 'B/s') return fmtRate(n);
+      if (unit === '°C') return fmtN(n, 0) + '°C';
+      if (unit === '%') return fmtN(n, 0) + '%';
+      if (unit === '') return fmtN(n, 2);
+      return fmtN(n, 0) + unit;
+    };
+    const line = (lab, n) => `<span><b class="muted">${lab}</b> ${show(n)}</span>`;
+    return `<div class="metric-hist">
+      <div class="row small metric-hist-meta"><span class="muted">Session · ${esc(since)} · ${hist.length} sample${hist.length === 1 ? '' : 's'}</span></div>
+      <div class="spark-wrap">${sparkline(vals, 220, 44, stroke)}</div>
+      <div class="row small metric-hist-stats">${line('Now', hs.last)}${line('Avg', hs.avg)}${line('Min', hs.min)}${line('Max', hs.max)}</div>
+    </div>`;
+  };
   const draw = () => {
     const x = u.stats; if (!x) { v.innerHTML = '<p class="muted">Loading stats…</p>'; return; }
-    const pct = (a, b) => b ? Math.round(100 * a / b) : 0, bar = p => `<div class="bar ${p > 90 ? 'crit' : p > 75 ? 'warn' : ''}"><i style="width:${p}%"></i></div>`;
+    const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
+    const bar = p => `<div class="bar ${p > 90 ? 'crit' : p > 75 ? 'warn' : ''}"><i style="width:${p}%"></i></div>`;
     const mp = pct(x.memUsed, x.memTotal);
-    v.innerHTML = `<div class="grid cols-4">
-      <div class="card"><div class="card-title">CPU <span class="muted">${x.cores || '?'} cores</span></div><div class="stat-big">${x.cpu == null ? '…' : x.cpu.toFixed(1) + '%'}</div>${bar(x.cpu || 0)}<p class="muted small">Load ${x.load ? x.load.map(n => n.toFixed(2)).join(' · ') : '–'}</p></div>
-      <div class="card"><div class="card-title">Memory</div><div class="stat-big">${mp}%</div>${bar(mp)}<p class="muted small">${fmtB(x.memUsed)} of ${fmtB(x.memTotal)}${x.swapTotal ? ' · swap ' + fmtB(x.swapUsed) : ''}</p></div>
-      <div class="card"><div class="card-title">Uptime</div><div class="stat-big">${fmtUp(x.uptime)}</div><p class="muted small ellipsis">${esc(x.hostname)} · ${esc(x.os)}</p></div>
-      <div class="card"><div class="card-title">Uiable</div><p class="small">${u.uiable?.reachable ? `Dashboard is running on the server (port ${u.uiable.port}). Use <b>Open Uiable dashboard</b> above.` : (u.uiable?.installed || u.uiable?.isUiable) ? `Uiable ${esc(u.uiable.version || '')} is installed under /opt/uiable but not responding on the server — start it (or use Update) then Open dashboard.`.trim() : 'Not found on this server. Terminal, Files and Forwards still work over plain SSH.'}</p></div>
-    </div><div class="card" style="margin-top:16px"><div class="card-title">Storage</div>${x.disks.map(d => { const p = pct(d.used, d.size); return `<div style="margin-bottom:12px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${fmtB(d.used)} / ${fmtB(d.size)} · ${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted">No disks reported</p>'}</div>`;
+    const sp = pct(x.swapUsed, x.swapTotal);
+    const open = k => u.metricOpen[k] !== false ? 'open' : '';
+    const since = u.statsSince ? fmtUp(Math.max(1, (Date.now() - u.statsSince) / 1000)) : '–';
+    v.innerHTML = `<div class="row small" style="margin-bottom:10px"><span class="muted">Metrics while this connection has been open · ${esc(since)}</span><span class="spacer"></span><span class="muted">${(u.statsHist || []).length} samples</span></div>
+    <div class="metric-cols">
+      <div class="metric-col">
+        <details class="card metric" data-k="cpu" ${open('cpu')}><summary><div class="grow"><div class="card-title">CPU <span class="muted">${x.cores || '?'} cores${x.temp != null ? ' · ' + Math.round(x.temp) + '°C' : ''}</span></div><div class="stat-big">${x.cpu == null ? '…' : x.cpu.toFixed(1) + '%'}</div>${bar(x.cpu || 0)}</div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('cpu', '%', 'var(--accent)')}${x.temp != null ? histBlock('temp', '°C', '#fb7185') : ''}</details>
+        <details class="card metric" data-k="load" ${open('load')}><summary><div class="grow"><div class="card-title">Load average</div><div class="stat-big">${x.load ? x.load[0].toFixed(2) : '–'}</div><p class="muted small">${x.load ? x.load.map(n => n.toFixed(2)).join(' · ') : '–'} <span class="muted">(1 · 5 · 15 min)</span></p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('load', '', '#2dd4bf')}</details>
+        ${x.gpu ? `<details class="card metric" data-k="gpu" ${open('gpu')}><summary><div class="grow"><div class="card-title">GPU <span class="muted ellipsis">${esc(x.gpu.name || '')}</span></div><div class="stat-big">${x.gpu.util == null ? '…' : Math.round(x.gpu.util) + '%'}</div>${bar(x.gpu.util || 0)}<p class="muted small">${x.gpu.memTotal ? fmtB(x.gpu.memUsed) + ' of ' + fmtB(x.gpu.memTotal) + ' VRAM' : 'VRAM n/a'}${x.gpu.temp != null ? ' · ' + Math.round(x.gpu.temp) + '°C' : ''}${x.gpu.count > 1 ? ' · ' + x.gpu.count + ' GPUs' : ''}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('gpu', '%', '#a78bfa')}${x.gpu.memTotal ? histBlock('gpuMem', '%', '#c4b5fd') : ''}</details>` : ''}
+      </div>
+      <div class="metric-col">
+        <details class="card metric" data-k="mem" ${open('mem')}><summary><div class="grow"><div class="card-title">Memory</div><div class="stat-big">${mp}%</div>${bar(mp)}<p class="muted small">${fmtB(x.memUsed)} of ${fmtB(x.memTotal)}${x.swapTotal ? ' · swap ' + fmtB(x.swapUsed) + (sp ? ' · ' + sp + '%' : '') : ''}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('mem', '%', 'var(--ok)')}${x.swapTotal ? histBlock('swap', '%', 'var(--warn)') : ''}</details>
+        <details class="card metric" data-k="net" ${open('net')}><summary><div class="grow"><div class="card-title">Network I/O <span class="muted">${esc((x.net && x.net.ifaces || []).slice(0, 2).join(', ') || '')}</span></div><div class="stat-big">${x.net && x.net.rx != null ? fmtRate(x.net.rx) : '…'}</div><p class="muted small">↓ ${x.net && x.net.rx != null ? fmtRate(x.net.rx) : '–'} · ↑ ${x.net && x.net.tx != null ? fmtRate(x.net.tx) : '–'}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('netRx', 'B/s', '#38bdf8')}${histBlock('netTx', 'B/s', '#818cf8')}</details>
+        <details class="card metric" data-k="diskio" ${open('diskio')}><summary><div class="grow"><div class="card-title">Disk I/O <span class="muted">${esc((x.diskIO && x.diskIO.disks || []).slice(0, 3).join(', ') || '')}</span></div><div class="stat-big">${x.diskIO && x.diskIO.read != null ? fmtRate(x.diskIO.read) : '…'}</div><p class="muted small">Read ${x.diskIO && x.diskIO.read != null ? fmtRate(x.diskIO.read) : '–'} · Write ${x.diskIO && x.diskIO.write != null ? fmtRate(x.diskIO.write) : '–'}</p></div><span class="metric-chev" aria-hidden="true"></span></summary>${histBlock('diskR', 'B/s', '#34d399')}${histBlock('diskW', 'B/s', '#fbbf24')}</details>
+        <details class="card metric" data-k="uptime" ${open('uptime')}><summary><div class="grow"><div class="card-title">Uptime & host</div><div class="stat-big">${fmtUp(x.uptime)}</div><p class="muted small ellipsis">${esc(x.hostname)} · ${esc(x.os)}</p></div><span class="metric-chev" aria-hidden="true"></span></summary><div class="metric-hist"><p class="small muted">Server uptime is from the host, not this app session. Expand the other cards for charts over the time this connection has been open.</p></div></details>
+      </div>
+    </div>
+    <details class="card metric" data-k="uiable" ${open('uiable')} style="margin-top:12px"><summary><div class="grow"><div class="card-title">Uiable</div><p class="small" style="margin:4px 0 0">${u.uiable?.reachable ? `Dashboard is running on the server (port ${u.uiable.port}). Use <b>Open Uiable dashboard</b> above.` : (u.uiable?.installed || u.uiable?.isUiable) ? `Uiable ${esc(u.uiable.version || '')} is installed under /opt/uiable but not responding on the server — start it (or use Update) then Open dashboard.`.trim() : 'Not found on this server. Terminal, Files and Forwards still work over plain SSH.'}</p></div><span class="metric-chev" aria-hidden="true"></span></summary><div class="metric-hist"><p class="small muted">Uiable status is checked when you open this connection. Use the header button to open or install.</p></div></details>
+    <details class="card metric" data-k="storage" ${open('storage')} style="margin-top:12px"><summary><div class="grow"><div class="card-title">Storage</div>${(x.disks || []).slice(0, 2).map(d => { const p = pct(d.used, d.size); return `<div style="margin-top:8px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted small" style="margin-top:6px">No disks reported</p>'}</div><span class="metric-chev" aria-hidden="true"></span></summary>
+      <div class="metric-hist">${(x.disks || []).map(d => { const p = pct(d.used, d.size); return `<div style="margin-bottom:12px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${fmtB(d.used)} / ${fmtB(d.size)} · ${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted">No disks reported</p>'}</div>
+    </details>`;
+    v.querySelectorAll('details.metric').forEach(d => {
+      d.ontoggle = () => { u.metricOpen[d.dataset.k] = d.open; };
+    });
   };
   const tick = async () => { if (!anyPane(s.id, 'overview')) return; if (!u.statsBusy) { u.statsBusy = true; try { onStats(s, await uc.call('stats', s.id)); } catch {} u.statsBusy = false; } if (anyPane(s.id, 'overview')) { draw(); statsTimer = setTimeout(tick, document.hidden ? 15000 : 3000); } };
   draw(); tick();
@@ -313,7 +427,7 @@ uc.on(d => {
   else if (d.ev === 'shell-exit') { const i = u.terms.findIndex(t => t.sid === d.sid); if (i >= 0) { u.terms[i].term.dispose(); u.terms[i].node.remove(); u.terms.splice(i, 1); }
     if (u.activeTerm === d.sid) u.activeTerm = u.terms[0]?.sid; if (anyPane(d.id, 'terminal')) u.redrawTerms?.(); }
   else if (d.ev === 'closed') { const s = servers.find(x => x.id === d.id); const r = s && rulesFor(s).find(x => x.metric === 'disconnect');
-    if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = [];
+    if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = []; u.statsHist = []; u.statsSince = null; u.stats = null;
     if (s && s.quick) uc.call('servers:purgetemp', d.id).catch(() => {});
     refresh(); }
   else if (d.ev === 'progress') { let p = $('#prog'); if (!p) { p = el('<div id="prog" class="pill prog"></div>'); document.body.append(p); }
@@ -323,6 +437,51 @@ uc.on(d => {
   else if (d.ev === 'toast') toast(d.message, true);
 });
 window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !== 'terminal') continue; const u = S(p.srv); const t = u.terms.find(t => t.sid === u.activeTerm); if (t) t.fit.fit(); } });
+
+// ---------- Files context menu (right-click / long-press)
+function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
+  const name = f ? f.name : (p || '').split('/').pop();
+  const paths = F.sel.size ? [...F.sel] : (p ? [p] : []);
+  const many = paths.length > 1;
+  const items = [];
+  if (f && (f.dir || (f.link && !f.size))) {
+    items.push(['Open folder', () => { F.cwd = p; load(); }]);
+  } else if (f && !isLocal) {
+    items.push(['Open / edit', () => editFile(srvId, p)]);
+  }
+  if (paths.length && !isLocal) {
+    items.push(['Download', async () => { const d = await call('fs:download', srvId, paths); if (d) toast('Downloaded to ' + d); }]);
+  }
+  items.push('---');
+  if (name) items.push(['Copy name', () => clip.write(name).then(() => toast('Copied name'))]);
+  if (p) items.push(['Copy path', () => clip.write(p).then(() => toast('Copied path'))]);
+  if (many) items.push(['Copy paths', () => clip.write(paths.join('\n')).then(() => toast('Copied ' + paths.length + ' paths'))]);
+  items.push('---');
+  if (!isLocal && paths.length === 1) {
+    items.push(['Rename…', async () => {
+      const n = await prompt2('Rename to', name); if (!n) return;
+      await call('fs:rename', srvId, p, pjoin(pdir(p), n)); load();
+    }]);
+  }
+  if (!isLocal && paths.length) {
+    items.push(['Delete', async () => {
+      if (!confirm(`Delete ${paths.length} item(s)? Folders are deleted with everything inside.`)) return;
+      for (const q of paths) await call('fs:remove', srvId, q); load();
+    }]);
+  }
+  if (!isLocal) {
+    items.push('---');
+    items.push(['New folder…', async () => { const n = await prompt2('New folder name'); if (n) { await call('fs:mkdir', srvId, pjoin(F.cwd, n)); load(); } }]);
+    items.push(['New file…', async () => { const n = await prompt2('New file name'); if (n) { await call('fs:write', srvId, pjoin(F.cwd, n), ''); load(); } }]);
+  }
+  items.push(['Refresh', () => load()]);
+  ctxMenu(x, y, items.filter(x => x != null));
+}
+function bindLongPress(node, fn) {
+  let lp = null;
+  node.addEventListener('touchstart', e => { const t = e.touches[0]; lp = setTimeout(() => fn(t.clientX, t.clientY), 550); }, { passive: true });
+  ['touchend', 'touchmove', 'touchcancel'].forEach(ev => node.addEventListener(ev, () => clearTimeout(lp), { passive: true }));
+}
 
 // ---------- Files (SFTP): one pane per server — open a second pane to drag files between servers
 function fpane(srvId, F, onOther) {
@@ -345,6 +504,12 @@ function fpane(srvId, F, onOther) {
       r.onclick = e => { if (!e.ctrlKey && !e.shiftKey) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); } F.sel.has(p) ? F.sel.delete(p) : F.sel.add(p); r.classList.toggle('sel', F.sel.has(p)); };
       r.ondblclick = () => f.dir || f.link && !f.size ? (F.cwd = p, load()) : isLocal ? null : editFile(srvId, p);
       r.ondragstart = e => { e.dataTransfer.setData('application/x-uc-row', JSON.stringify({ srv: srvId, path: p, dir: f.dir, local: isLocal })); e.dataTransfer.effectAllowed = 'copy'; };
+      const openFileCtx = (cx, cy) => {
+        if (!F.sel.has(p)) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); F.sel.add(p); r.classList.add('sel'); }
+        fileMenu(cx, cy, srvId, F, f, p, isLocal, load);
+      };
+      r.oncontextmenu = e => { e.preventDefault(); openFileCtx(e.clientX, e.clientY); };
+      bindLongPress(r, openFileCtx);
     });
   };
   q('up').onclick = () => { F.cwd = pdir(F.cwd); load(); }; q('rf').onclick = load;
@@ -354,6 +519,15 @@ function fpane(srvId, F, onOther) {
   q('rn').onclick = async () => { const [p] = F.sel; if (!p) return toast('Select something first', true); const n = await prompt2('Rename to', p.split('/').pop()); if (n) { await call('fs:rename', srvId, p, pjoin(pdir(p), n)); load(); } };
   q('rm').onclick = async () => { if (!F.sel.size) return toast('Select something first', true); if (!confirm(`Delete ${F.sel.size} item(s)? Folders are deleted with everything inside.`)) return; for (const p of F.sel) await call('fs:remove', srvId, p); load(); };
   q('dl').onclick = async () => { if (!F.sel.size) return toast('Select something first', true); const d = await call('fs:download', srvId, [...F.sel]); if (d) toast('Downloaded to ' + d); };
+  const flist = node.querySelector('.flist');
+  if (flist) {
+    flist.oncontextmenu = e => {
+      if (e.target.closest('tr[data-i]')) return;
+      e.preventDefault();
+      fileMenu(e.clientX, e.clientY, srvId, F, null, F.cwd, isLocal, load);
+    };
+    bindLongPress(flist, (cx, cy) => fileMenu(cx, cy, srvId, F, null, F.cwd, isLocal, load));
+  }
   // drop target: rows from the other pane (server->server copy) or OS files (upload)
   let dragN = 0; const drop = el('<div class="drop hidden">Drop here</div>'); node.append(drop);
   node.ondragenter = e => { e.preventDefault(); dragN++; drop.classList.remove('hidden'); };
