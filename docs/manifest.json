@@ -125,5 +125,7 @@
       "slug": "troubleshooting",
       "path": "docs/troubleshooting.md"
     }
-  ]
+  ],
+  "companionDocs": "https://github.com/AlfieeLawrence/uiable/tree/main/docs",
+  "companionManifest": "https://github.com/AlfieeLawrence/uiable/blob/main/docs/manifest.json"
 }

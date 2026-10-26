@@ -10,7 +10,8 @@ slug: index
 Uiable Connect is the desktop and mobile companion to [Uiable](https://github.com/AlfieeLawrence/uiable), the lightweight self-hosted Linux server dashboard. Use it to save SSH (and Telnet/serial) connections, open terminals, browse files over SFTP, forward ports, check health, and optionally install Uiable on a server.
 
 **Download builds:** [GitHub Releases](https://github.com/AlfieeLawrence/Uiable-Connect/releases)  
-**Source:** [AlfieeLawrence/Uiable-Connect](https://github.com/AlfieeLawrence/Uiable-Connect)
+**Source:** [AlfieeLawrence/Uiable-Connect](https://github.com/AlfieeLawrence/Uiable-Connect)  
+**Server dashboard docs:** [Uiable docs](https://github.com/AlfieeLawrence/uiable/tree/main/docs) (`docs/manifest.json` for website ingest)
 
 ## Start here
 

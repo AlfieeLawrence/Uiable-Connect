@@ -7,7 +7,7 @@ slug: install-uiable
 
 # Install or update Uiable on a server
 
-[Uiable](https://github.com/AlfieeLawrence/uiable) is the self-hosted dashboard that runs *on* the Linux server. Connect can install or update it for you over SSH.
+[Uiable](https://github.com/AlfieeLawrence/uiable) ([docs](https://github.com/AlfieeLawrence/uiable/tree/main/docs)) is the self-hosted dashboard that runs *on* the Linux server. Connect can install or update it for you over SSH.
 
 ## Detect
 
@@ -38,4 +38,4 @@ When Uiable listens on localhost only, open it with **Open Uiable dashboard** so
 
 ## Related
 
-[Port forwards](port-forwards.md) · [Connections](connections.md) · [Uiable on GitHub](https://github.com/AlfieeLawrence/uiable)
+[Port forwards](port-forwards.md) · [Connections](connections.md) · [Uiable docs](https://github.com/AlfieeLawrence/uiable/tree/main/docs) · [Uiable on GitHub](https://github.com/AlfieeLawrence/uiable)
