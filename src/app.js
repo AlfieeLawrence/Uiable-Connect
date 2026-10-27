@@ -699,6 +699,19 @@ function vTerminal(s, u, v) {
   $('#fbn', v).onclick = () => find(1); $('#fbp', v).onclick = () => find(-1);
   fbi.oninput = () => find(1); fbi.onkeydown = e => { if (e.key === 'Enter') find(e.shiftKey ? -1 : 1); if (e.key === 'Escape') u.search.close(); };
   $('#newT', v).onclick = () => newT(); u.newT = newT; u.redrawTerms = show;
+  // Files → Open in terminal: cd in the focused tab (open one if needed)
+  if (u.pendingTermCmd) {
+    const cmd = u.pendingTermCmd; delete u.pendingTermCmd;
+    (async () => {
+      if (!u.terms.length) await newT(cmd);
+      else {
+        const sid = u.activeTerm || u.terms[0].sid;
+        uc.send('shell:write', s.id, sid, cmd.replace(/\r?\n/g, '\r') + '\r');
+        show();
+        try { u.terms.find(x => x.sid === sid)?.term.focus(); } catch {}
+      }
+    })();
+  }
   const sudoCb = $('#termSudo', v);
   if (sudoCb) {
     sudoCb.checked = !!u.termUseSudo;
@@ -754,6 +767,17 @@ uc.on(d => {
 });
 window.addEventListener('resize', () => { for (const p of panes) { if (p.tab !== 'terminal') continue; const u = S(p.srv); const fitSid = sid => { const t = u.terms.find(x => x.sid === sid); if (t) try { t.fit.fit(); } catch {} }; fitSid(u.activeTerm); if (u.termSplit) fitSid(u.activeTermB); } });
 
+// ---------- Open a files path in the Terminal tab (cd)
+function openInTerminal(srvId, dir) {
+  if (!dir) return;
+  const s = servers.find(x => x.id === srvId);
+  if (!s || !s.connected) { toast('Not connected', true); return; }
+  const u = S(srvId);
+  // JSON.stringify → double-quoted path safe for bash/zsh/sh
+  u.pendingTermCmd = 'cd ' + JSON.stringify(String(dir));
+  openSrvTab(s, 'terminal');
+}
+
 // ---------- Files context menu (right-click / long-press)
 function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
   const name = f ? f.name : (p || '').split('/').pop();
@@ -764,6 +788,12 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
     items.push(['Open folder', () => { F.cwd = p; load(); }]);
   } else if (f && !isLocal) {
     items.push(['Open / edit', () => editFile(srvId, p, F.useSudo)]);
+  }
+  // Folder (or list background = cwd) → cd into it; file → cd to parent
+  if (!isLocal && p) {
+    const isDir = !f || !!(f.dir || (f.link && !f.size));
+    const termDir = isDir ? p : (pdir(p) || '/');
+    items.push(['Open in terminal', () => openInTerminal(srvId, termDir)]);
   }
   if (paths.length && !isLocal) {
     items.push(['Download', async () => { const d = await call('fs:download', srvId, paths); if (d) toast('Downloaded to ' + d); }]);
