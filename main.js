@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, safeStorage, dialog, shell, Menu, Notificat
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame, sudoRemove } = require('./lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, listSerial, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame, sudoRemove, sudoMkdir, sudoRename, sudoDownload, copyAcross, friendlyFsError } = require('./lib/core');
 const os = require('os');
 const net = require('net');
 const { Store } = require('./lib/store');
@@ -217,22 +217,31 @@ h('shell:open', async (id, sid, c, r, sudo) => { log(id, sudo ? 'shell-sudo' : '
 ipcMain.on('shell:write', (_e, id, sid, d) => sessions.get(id)?.shellWrite(sid, d));
 ipcMain.on('shell:resize', (_e, id, sid, c, r) => sessions.get(id)?.shellResize(sid, c, r));
 ipcMain.on('shell:close', (_e, id, sid) => sessions.get(id)?.shellClose(sid));
+// Files: when the pane's "Use sudo" is on, EVERY op goes through the sudo helpers (never plain SFTP).
+// Plain-SFTP permission errors are rewritten to say "tick Use sudo" instead of the raw {35}/SSH_FX text.
+const spw = id => { const s = store.full(id); return s.sudoPassword || s.password || null; };
+const plain = p => Promise.resolve(p).catch(e => { throw friendlyFsError(e); });
 h('fs:home', id => S(id).home());
-h('fs:list', async (id, p, sudo) => { if (!sudo) return S(id).list(p); const srv = store.full(id); return sudoList(S(id), p, srv.sudoPassword || srv.password || null); });
-h('fs:mkdir', (id, p) => S(id).mkdir(p));
-h('fs:rename', (id, a, b) => S(id).rename(a, b));
-h('fs:remove', async (id, p, sudo) => { log(id, sudo ? 'remove-sudo' : 'remove', p); if (!sudo) return S(id).remove(p); const srv = store.full(id); return sudoRemove(S(id), p, srv.sudoPassword || srv.password || null); });
-h('fs:read', async (id, p, sudo) => { if (!sudo) return S(id).readText(p); const srv = store.full(id); return sudoReadText(S(id), p, srv.sudoPassword || srv.password || null); });
-h('fs:write', async (id, p, t, sudo) => { if (!sudo) return S(id).writeText(p, t); log(id, 'write-sudo', p); const srv = store.full(id); return sudoWriteText(S(id), p, t, srv.sudoPassword || srv.password || null); });
+h('fs:list', async (id, p, sudo) => sudo ? sudoList(S(id), p, spw(id)) : plain(S(id).list(p)));
+h('fs:mkdir', async (id, p, sudo) => { if (sudo) { log(id, 'mkdir-sudo', p); return sudoMkdir(S(id), String(p), spw(id)); } return plain(S(id).mkdir(p)); });
+h('fs:rename', async (id, a, b, sudo) => { if (sudo) { log(id, 'rename-sudo', `${a} -> ${b}`); return sudoRename(S(id), String(a), String(b), spw(id)); } return plain(S(id).rename(a, b)); });
+h('fs:remove', async (id, p, sudo) => { log(id, sudo ? 'remove-sudo' : 'remove', p); return sudo ? sudoRemove(S(id), p, spw(id)) : plain(S(id).remove(p)); });
+h('fs:read', async (id, p, sudo) => sudo ? sudoReadText(S(id), p, spw(id)) : plain(S(id).readText(p)));
+h('fs:write', async (id, p, t, sudo) => { if (!sudo) return plain(S(id).writeText(p, t)); log(id, 'write-sudo', p); return sudoWriteText(S(id), p, t, spw(id)); });
 const copies = new Map(); // cx -> { dead }
 h('fs:cancel', cx => { const c = copies.get(cx); if (c) c.dead = true; return true; });
-h('fs:copy', async (id, src, toId, dstDir, cx, sudo) => { const dst = S(toId); // same-server copy -> plain cp; otherwise relay through this app
-  if (toId === id) { if (sudo) { const srv = store.full(id); return sudoCopySame(S(id), String(src), String(dstDir), srv.sudoPassword || srv.password || null); } const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
-  log(id, 'copy', `${src} -> ${toId}:${dstDir}`);
+// sudo = destination pane's Use sudo, srcSudo = source pane's Use sudo
+h('fs:copy', async (id, src, toId, dstDir, cx, sudo, srcSudo) => { const dst = S(toId);
+  if (toId === id) { if (sudo || srcSudo) { log(id, 'copy-sudo', `${src} -> ${dstDir}`); return sudoCopySame(S(id), String(src), String(dstDir), spw(id)); }
+    const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw friendlyFsError(new Error(r.err || 'copy failed')); return true; }
+  log(id, sudo || srcSudo ? 'copy-sudo' : 'copy', `${src} -> ${toId}:${dstDir}`);
   const ab = { dead: false }; if (cx) copies.set(cx, ab);
-  try { return await S(id).copyTo(dst, String(src), String(dstDir), pr => send('ev', { id, ev: 'progress', cx, ...pr }), () => ab.dead); }
+  try { return await plain(copyAcross(S(id), String(src), dst, String(dstDir), { srcSudo: !!srcSudo, srcPw: srcSudo ? spw(id) : null, dstSudo: !!sudo, dstPw: sudo ? spw(toId) : null },
+    pr => send('ev', { id, ev: 'progress', cx, ...pr }), () => ab.dead)); }
   finally { copies.delete(cx); } });
-h('fs:downloadTo', async (id, remote, dir) => { await S(id).download(String(remote), String(dir), pr => send('ev', { id, ev: 'progress', ...pr })); log(id, 'download', remote); return dir; });
+const dlOne = (id, remote, dir, sudo) => { const pr = p => send('ev', { id, ev: 'progress', ...p });
+  return sudo ? sudoDownload(S(id), String(remote), String(dir), spw(id), pr) : plain(S(id).download(String(remote), String(dir), pr)); };
+h('fs:downloadTo', async (id, remote, dir, sudo) => { await dlOne(id, remote, dir, sudo); log(id, sudo ? 'download-sudo' : 'download', remote); return dir; });
 h('lfs:home', () => app.getPath('home'));
 h('lfs:list', async (dir) => { const es = await fs.promises.readdir(String(dir), { withFileTypes: true });
   return es.map(e => ({ name: e.name, size: 0, mtime: 0, dir: e.isDirectory(), link: e.isSymbolicLink() })).sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name)); });
@@ -255,10 +264,10 @@ h('docker:ps', async id => {
   const srv = store.full(id);
   return listDockerPs(S(id), { sudoPw: srv.sudoPassword || srv.password || null });
 });
-h('fs:upload', async (id, locals, dir, sudo) => { const srv = store.full(id); const pw = srv.sudoPassword || srv.password || null; for (const l of locals) { if (sudo) await sudoUploadPath(S(id), l, dir, pw, pr => send('ev', { id, ev: 'progress', ...pr })); else await S(id).upload(l, dir, pr => send('ev', { id, ev: 'progress', ...pr })); } log(id, sudo ? 'upload-sudo' : 'upload', `${locals.length} item(s) -> ${dir}`); return true; });
-h('fs:download', async (id, remotes) => {
+h('fs:upload', async (id, locals, dir, sudo) => { const srv = store.full(id); const pw = srv.sudoPassword || srv.password || null; for (const l of locals) { if (sudo) await sudoUploadPath(S(id), l, dir, pw, pr => send('ev', { id, ev: 'progress', ...pr })); else await plain(S(id).upload(l, dir, pr => send('ev', { id, ev: 'progress', ...pr }))); } log(id, sudo ? 'upload-sudo' : 'upload', `${locals.length} item(s) -> ${dir}`); return true; });
+h('fs:download', async (id, remotes, sudo) => {
   const r = await dialog.showOpenDialog(win, { title: 'Download to…', properties: ['openDirectory', 'createDirectory'] });
   if (r.canceled) return null;
-  for (const p of remotes) await S(id).download(p, r.filePaths[0], pr => send('ev', { id, ev: 'progress', ...pr }));
-  log(id, 'download', `${remotes.length} item(s)`); shell.openPath(r.filePaths[0]); return r.filePaths[0];
+  for (const p of remotes) await dlOne(id, p, r.filePaths[0], sudo);
+  log(id, sudo ? 'download-sudo' : 'download', `${remotes.length} item(s)`); shell.openPath(r.filePaths[0]); return r.filePaths[0];
 });

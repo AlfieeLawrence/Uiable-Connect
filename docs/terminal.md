@@ -53,7 +53,7 @@ Terminal colours follow **Settings → Terminal theme**, and can track the app t
 
 ## Use sudo
 
-On SSH sessions, tick **Use sudo** in the terminal toolbar. New tabs then open a root login shell (`sudo -S -i` / `sudo -n -i`) using the password saved for that connection (sudo password, or login password if that is what you use with sudo).
+On SSH sessions, tick **Use sudo** in the terminal toolbar. New tabs then open a root login shell (`sudo -i`) using the password saved for that connection (sudo password, or login password if that is what you use with sudo). The password is handed to sudo through a deleted temp file on a file descriptor — it is never typed into the terminal, so it can't echo on screen. Works on desktop, Docker, iOS and Android.
 
 - Tab labels show a **sudo** pill when the shell is root.
 - Docker actions that need root (for example `docker exec` when your user is not in the `docker` group) work in those tabs because the shell is already root.

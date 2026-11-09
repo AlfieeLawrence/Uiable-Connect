@@ -54,6 +54,35 @@
     (data.history ||= []).push({ t: Date.now(), s: id || null, n: s ? s.name || s.host : '', ev, d: String(d ?? '').slice(0, 500) });
     if (data.history.length > 500) data.history = data.history.slice(-500); await save(); };
 
+  // ---- sudo file helpers (Files "Use sudo"): every op runs as root through H['sudo:exec'], never plain SFTP.
+  const PERM_RE = /SSH_FX_PERMISSION_DENIED|permission denied|operation not permitted|^\{\d+\}\(code:/i;
+  const FS_PERM_MSG = 'Permission denied — this SSH user can\'t access that path. Tick “Use sudo” in Files (needs a sudo password on the connection) and try again.';
+  const plain = p => Promise.resolve(p).catch(e => { const m = (e && (e.message || e.errorMessage)) || String(e); throw new Error(PERM_RE.test(m) ? FS_PERM_MSG : m); });
+  const lastLine = (r, d) => (String((r && (r.err || r.out)) || d).trim().split('\n').pop()) || d;
+  const sx = async (id, cmd, what) => { const r = await H['sudo:exec'](id, cmd); if (r.code) throw new Error(lastLine(r, what + ' failed')); return r; };
+  const homeOf = async id => (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '/tmp' }))).path;
+  const stageDir = async (id, kind) => { const d = (await homeOf(id)) + '/.uiable-connect/.' + kind + '/' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const r = await exec(id, `mkdir -p -m 700 ${sh(d)}`, 15000); if (r.code) throw new Error(lastLine(r, 'could not create staging dir')); return d; };
+  const baseName = p => String(p).replace(/\/+$/, '').split('/').pop() || 'root';
+  // root-only path -> user-owned copy that SFTP can read; caller must cleanup()
+  const sudoStageOut = async (id, remote) => { const d = await stageDir(id, 'dl'); const cleanup = () => exec(id, `rm -rf -- ${sh(d)}`, 30000).catch(() => {});
+    try { const ids = await exec(id, 'echo "$(id -u):$(id -g)"', 15000); const own = String(ids.out || '').trim(); if (!/^\d+:\d+$/.test(own)) throw new Error('could not read SSH user id');
+      const dst = d + '/' + baseName(remote); await sx(id, `cp -RLp -- ${sh(remote)} ${sh(dst)} && chown -R ${own} ${sh(dst)} && chmod -R u+rwX ${sh(dst)}`, 'sudo read');
+      return { path: dst, cleanup }; } catch (e) { cleanup(); throw e; } };
+  // user-owned staged path -> dstDir as root (replaces same name), staged copy removed
+  const sudoPlace = async (id, staged, dstDir, name) => { const dest = (dstDir.endsWith('/') ? dstDir : dstDir + '/') + (name || baseName(staged));
+    try { await sx(id, `rm -rf -- ${sh(dest)} && cp -a -- ${sh(staged)} ${sh(dest)}`, 'sudo copy'); } finally { exec(id, `rm -rf -- ${sh(staged)}`, 15000).catch(() => {}); } return dest; };
+  const sudoList = async (id, dir) => { const r = await sx(id, `find ${sh(dir)} -maxdepth 1 -mindepth 1 -printf ${sh('%f\t%y\t%s\t%T@\t%#m\n')}`, 'list');
+    return String(r.out || '').trim().split('\n').filter(Boolean).map(l => { const [name, y, size, mt, mode] = l.split('\t');
+      return { name, size: Number(size) || 0, mtime: Math.floor(Number(mt) * 1000) || 0, mode: parseInt(mode, 8) || 0, dir: y === 'd', link: y === 'l' }; })
+      .sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name)); };
+  const sudoRead = async (id, p) => { const st = await sx(id, `stat -c %s -- ${sh(p)}`, 'stat'); const size = Number(String(st.out).trim());
+    if (!(size >= 0)) throw new Error('Could not read file size'); if (size > 2 * 1024 * 1024) throw new Error('File is larger than 2 MB, download it instead');
+    const r = await sx(id, `cat -- ${sh(p)}`, 'read'); const out = String(r.out || ''); if (out.includes('\u0000')) throw new Error('This looks like a binary file'); return out; };
+  const sudoWrite = async (id, p, t) => { const d = await stageDir(id, 'w'); const tmpf = d + '/f';
+    try { await Ssh.sftpWrite({ id, path: tmpf, data: bytesToB64(new TextEncoder().encode(t)), append: false }); await sx(id, `cp -f -- ${sh(tmpf)} ${sh(p)}`, 'sudo write'); }
+    finally { exec(id, `rm -rf -- ${sh(d)}`, 15000).catch(() => {}); } return true; };
+
   if (Ssh && Ssh.addListener) {
     Ssh.addListener('shellData', d => emit({ id: d.id, ev: 'shell-data', sid: d.sid, data: d.data }));
     Ssh.addListener('shellExit', d => emit({ id: d.id, ev: 'shell-exit', sid: d.sid }));
@@ -278,8 +307,16 @@ echo "envport=$EP"`, 15000).catch(() => ({ out: '' }));
     'fs:downloadTo': async () => { throw new Error('Use Download instead'); },
     'lfs:home': async () => { throw new Error('Not available on phones/tablets'); },
     'lfs:list': async () => { throw new Error('Not available on phones/tablets'); },
-    'fs:copy': async (id, src, toId, dstDir, cx) => { S(toId); await load();
-      if (toId === id) { const r = await exec(id, `cp -r -- ${sh(src)} ${sh(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
+    // sudo = destination pane's Use sudo, srcSudo = source pane's: stage out as root / stage in then place as root
+    'fs:copy': async (id, src, toId, dstDir, cx, sudo, srcSudo) => { S(toId); await load();
+      if (toId === id) { if (sudo || srcSudo) { await sx(id, `cp -a -- ${sh(src)} ${sh(dstDir)}`, 'sudo copy'); hlog(id, 'copy-sudo', src); return true; }
+        const r = await exec(id, `cp -r -- ${sh(src)} ${sh(dstDir)}`); if (r.code) throw new Error(PERM_RE.test(r.err || '') ? FS_PERM_MSG : (r.err || 'copy failed')); return true; }
+      if (sudo || srcSudo) { let out = null, inDir = null;
+        try { let from = src; if (srcSudo) { out = await sudoStageOut(id, src); from = out.path; }
+          if (!sudo) return await H['fs:copy'](id, from, toId, dstDir, cx);
+          inDir = await stageDir(toId, 'up'); const staged = await H['fs:copy'](id, from, toId, inDir, cx);
+          return await sudoPlace(toId, staged, dstDir, baseName(src)); }
+        finally { if (out) out.cleanup(); if (inDir) exec(toId, `rm -rf -- ${sh(inDir)}`, 30000).catch(() => {}); } }
       const ab = { dead: false }; if (cx) copies.set(cx, ab);
       try {
       const st = await Ssh.sftpStat({ id, path: src }); const name = src.replace(/\/+$/, '').split('/').pop();
@@ -303,35 +340,52 @@ echo "envport=$EP"`, 15000).catch(() => ({ out: '' }));
         const r = await H['sudo:exec'](tid, 'id -u', pw || f.sudoPassword || f.password).catch(e => ({ code: 1, err: e.message }));
         return r.out && r.out.trim() === '0' ? { ok: true, info: 'sudo works — root access confirmed' } : { ok: false, info: ((r.err || 'sudo failed').trim().split('\n').pop()) }; }
       finally { await Ssh.disconnect({ id: tid }).catch(() => {}); sessions.delete(tid); } },
-    'shell:open': async (id, sid, cols, rows) => { S(id); await Ssh.shellOpen({ id, sid, cols, rows }); return sid; },
+    // sudo tab (terminal "Use sudo"): validate sudo once from a deleted password file (never typed into the PTY),
+    // then exec a root login shell on the same tty (sudo's cached timestamp). Falls back to sudo's own prompt.
+    'shell:open': async (id, sid, cols, rows, sudo) => { S(id); await Ssh.shellOpen({ id, sid, cols, rows }); if (!sudo) return sid;
+      await load(); const srv = full(id); const pw = srv.sudoPassword || srv.password; hlog(id, 'shell-sudo');
+      if (!pw) { await Ssh.shellWrite({ id, sid, data: ' exec sudo -i\n' }); return sid; }
+      const dir = (await homeOf(id)) + '/.uiable-connect', pf = dir + '/.s' + Date.now().toString(36);
+      await exec(id, `mkdir -p -m 700 ${sh(dir)}`, 15000);
+      await Ssh.sftpWrite({ id, path: pf, data: bytesToB64(new TextEncoder().encode(pw + '\n')), append: false });
+      setTimeout(() => exec(id, `rm -f ${sh(pf)}`, 10000).catch(() => {}), 15000); // safety net if the shell never ran it
+      await Ssh.shellWrite({ id, sid, data: ` exec 3< ${sh(pf)}; rm -f ${sh(pf)}; sudo -S -p '' -v <&3 2>/dev/null; exec 3<&-; clear; exec sudo -i\n` });
+      return sid; },
     'fs:home': async id => (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '/' }))).path,
-    'fs:list': async (id, p) => (await Ssh.sftpList({ id, path: p })).items.map(i => ({ name: i.name, size: i.size, mtime: i.mtime * 1000, mode: i.mode,
+    'fs:list': async (id, p, sudo) => sudo ? sudoList(id, p) : (await plain(Ssh.sftpList({ id, path: p }))).items.map(i => ({ name: i.name, size: i.size, mtime: i.mtime * 1000, mode: i.mode,
       dir: (i.mode & 0o170000) === 0o040000, link: (i.mode & 0o170000) === 0o120000 })).sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name)),
-    'fs:mkdir': (id, p) => Ssh.sftpMkdir({ id, path: p }).then(() => true),
-    'fs:rename': (id, a, b) => Ssh.sftpRename({ id, from: a, to: b }).then(() => true),
-    'fs:remove': async (id, p) => { const r = await exec(id, `rm -rf -- ${sh(p)}`); if (r.code) throw new Error(r.err || 'rm failed'); return true; },
-    'fs:read': async (id, p) => { const st = await Ssh.sftpStat({ id, path: p }); if (st.size > 2 * 1024 * 1024) throw new Error('File is larger than 2 MB, download it instead');
+    'fs:mkdir': async (id, p, sudo) => { if (sudo) { await sx(id, `mkdir -p -- ${sh(p)}`, 'sudo mkdir'); hlog(id, 'mkdir-sudo', p); return true; } return plain(Ssh.sftpMkdir({ id, path: p }).then(() => true)); },
+    'fs:rename': async (id, a, b, sudo) => { if (sudo) { await sx(id, `mv -- ${sh(a)} ${sh(b)}`, 'sudo rename'); hlog(id, 'rename-sudo', a + ' -> ' + b); return true; } return plain(Ssh.sftpRename({ id, from: a, to: b }).then(() => true)); },
+    'fs:remove': async (id, p, sudo) => { if (sudo) { await sx(id, `rm -rf -- ${sh(p)}`, 'sudo delete'); hlog(id, 'remove-sudo', p); return true; }
+      const r = await exec(id, `rm -rf -- ${sh(p)}`); if (r.code) throw new Error(PERM_RE.test(r.err || '') ? FS_PERM_MSG : (r.err || 'rm failed')); return true; },
+    'fs:read': async (id, p, sudo) => { if (sudo) return sudoRead(id, p); const st = await plain(Ssh.sftpStat({ id, path: p })); if (st.size > 2 * 1024 * 1024) throw new Error('File is larger than 2 MB, download it instead');
       const r = await Ssh.sftpRead({ id, path: p, offset: 0, length: st.size }); const u = b64ToBytes(r.data);
       if (u.includes(0)) throw new Error('This looks like a binary file'); return new TextDecoder().decode(u); },
-    'fs:write': (id, p, t) => Ssh.sftpWrite({ id, path: p, data: bytesToB64(new TextEncoder().encode(t)), append: false }).then(() => true),
+    'fs:write': async (id, p, t, sudo) => { if (sudo) { await sudoWrite(id, p, t); hlog(id, 'write-sudo', p); return true; } return plain(Ssh.sftpWrite({ id, path: p, data: bytesToB64(new TextEncoder().encode(t)), append: false }).then(() => true)); },
     // Mobile upload: File objects from <input type=file> (photos, Files app, Drive...) streamed in 512 KB chunks
-    'fs:upload': async (id, files, dir) => { for (const f of files) {
+    'fs:upload': async (id, files, dir, sudo) => { if (sudo) { const d = await stageDir(id, 'up'); // stage in ~ then place as root
+        try { await H['fs:upload'](id, files, d); for (const f of files) await sudoPlace(id, d + '/' + f.name, dir, f.name); }
+        finally { exec(id, `rm -rf -- ${sh(d)}`, 30000).catch(() => {}); } hlog(id, 'upload-sudo', `${files.length} item(s) -> ${dir}`); return true; }
+      for (const f of files) {
       const dest = (dir.endsWith('/') ? dir : dir + '/') + f.name; let off = 0;
-      if (!f.size) await Ssh.sftpWrite({ id, path: dest, data: '', append: false });
+      if (!f.size) await plain(Ssh.sftpWrite({ id, path: dest, data: '', append: false }));
       while (off < f.size) { const u = new Uint8Array(await f.slice(off, off + CHUNK).arrayBuffer());
-        await Ssh.sftpWrite({ id, path: dest, data: bytesToB64(u), append: off > 0 }); off += u.length;
+        await plain(Ssh.sftpWrite({ id, path: dest, data: bytesToB64(u), append: off > 0 })); off += u.length;
         emit({ id, ev: 'progress', name: f.name, t: off, tot: f.size }); } } return true; },
     // Mobile download: saved to the app cache then handed to the share sheet ("Save to Files", Drive, AirDrop...)
-    'fs:download': async (id, remotes) => { const out = [];
-      for (let p of remotes) { let name = p.split('/').pop() || 'download', tmp = null;
-        const st = await Ssh.sftpStat({ id, path: p });
+    'fs:download': async (id, remotes, sudo) => { const out = [];
+      for (let p of remotes) { let name = p.split('/').pop() || 'download', tmp = null, staged = null;
+        try {
+        if (sudo) { staged = await sudoStageOut(id, p); p = staged.path; } // root-only -> user-owned copy, then the normal SFTP path
+        const st = await plain(Ssh.sftpStat({ id, path: p }));
         if (st.dir) { tmp = `/tmp/uc-${Date.now()}.tar.gz`; const r = await exec(id, `tar -C ${sh(p.replace(/\/[^/]+\/?$/, '') || '/')} -czf ${tmp} -- ${sh(name)}`, 600000);
           if (r.code) throw new Error(r.err || 'tar failed'); name += '.tar.gz'; p = tmp; st.size = (await Ssh.sftpStat({ id, path: tmp })).size; }
         const FS = P.Filesystem; let off = 0; await FS.writeFile({ path: name, data: '', directory: 'CACHE' });
         do { const r = await Ssh.sftpRead({ id, path: p, offset: off, length: CHUNK }); if (r.data) await FS.appendFile({ path: name, data: r.data, directory: 'CACHE' });
           off += r.bytes; emit({ id, ev: 'progress', name, t: off, tot: st.size }); if (!r.bytes) break; } while (off < st.size);
         if (tmp) exec(id, `rm -f ${tmp}`).catch(() => {});
-        out.push((await FS.getUri({ path: name, directory: 'CACHE' })).uri); }
+        out.push((await FS.getUri({ path: name, directory: 'CACHE' })).uri);
+        } finally { if (staged) staged.cleanup(); } }
       await P.Share.share({ title: 'Save download', files: out }); return 'share sheet'; },
   };
   const SEND = {
@@ -341,7 +395,8 @@ echo "envport=$EP"`, 15000).catch(() => ({ out: '' }));
   };
   window.uc = {
     call: async (ch, ...a) => { if (!H[ch]) throw new Error('Not supported on mobile: ' + ch);
-      try { return await H[ch](...a); } catch (e) { throw new Error((e && (e.message || e.errorMessage)) || String(e)); } },
+      try { return await H[ch](...a); } catch (e) { const m = (e && (e.message || e.errorMessage)) || String(e);
+        throw new Error(/^fs:/.test(ch) && /SSH_FX_PERMISSION_DENIED|^\{\d+\}\(code:/.test(m) ? FS_PERM_MSG : m); } },
     send: (ch, ...a) => { const f = SEND[ch]; if (f) Promise.resolve(f(...a)).catch(() => {}); },
     on: fn => listeners.push(fn),
     pathFor: f => f, // mobile passes File objects straight to fs:upload

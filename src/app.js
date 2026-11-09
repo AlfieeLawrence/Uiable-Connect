@@ -13,7 +13,10 @@ function toast(msg, err) {
   $('#toasts').append(t);
   t._timer = setTimeout(kill, err ? 9000 : 4500);
 }
-const call = (...a) => uc.call(...a).catch(e => { try { e._toasted = true; } catch {} toast(e.message, true); throw e; });
+// Raw SFTP permission errors (e.g. iOS "{35}(code: SSH_FX_PERMISSION_DENIED, ...)") -> say what to do instead.
+const fsPermMsg = 'Permission denied — this SSH user can\'t access that path. Tick “Use sudo” in Files (needs a sudo password on the connection) and try again.';
+const friendlyErr = e => { const m = String((e && e.message) || e || ''); if (/SSH_FX_PERMISSION_DENIED|^\{\d+\}\(code:/.test(m) || (/^permission denied$/i.test(m.trim()))) { try { e.message = fsPermMsg; } catch {} return fsPermMsg; } return m; };
+const call = (...a) => uc.call(...a).catch(e => { try { e._toasted = true; } catch {} toast(friendlyErr(e), true); throw e; });
 const quietCall = (...a) => uc.call(...a); // no auto-toast — caller shows one message
 
 /** Bring the Electron window forward and focus the first field in a modal (xterm steals focus otherwise). */
@@ -796,7 +799,7 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
     items.push(['Open in terminal', () => openInTerminal(srvId, termDir)]);
   }
   if (paths.length && !isLocal) {
-    items.push(['Download', async () => { const d = await call('fs:download', srvId, paths); if (d) toast('Downloaded to ' + d); }]);
+    items.push(['Download', async () => { if (F.useSudo) await ensureSudoForFiles(srvId); const d = await call('fs:download', srvId, paths, F.useSudo || undefined); if (d) toast('Downloaded to ' + d); }]);
   }
   items.push('---');
   if (name) items.push(['Copy name', () => clip.write(name).then(() => toast('Copied name'))]);
@@ -806,7 +809,8 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
   if (!isLocal && paths.length === 1) {
     items.push(['Rename…', async () => {
       const n = await prompt2('Rename to', name); if (!n) return;
-      await call('fs:rename', srvId, p, pjoin(pdir(p), n)); load();
+      if (F.useSudo) await ensureSudoForFiles(srvId);
+      await call('fs:rename', srvId, p, pjoin(pdir(p), n), F.useSudo || undefined); load();
     }]);
   }
   if (!isLocal && paths.length) {
@@ -825,8 +829,8 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
   }
   if (!isLocal) {
     items.push('---');
-    items.push(['New folder…', async () => { const n = await prompt2('New folder name'); if (n) { await call('fs:mkdir', srvId, pjoin(F.cwd, n)); load(); } }]);
-    items.push(['New file…', async () => { const n = await prompt2('New file name'); if (n) { await call('fs:write', srvId, pjoin(F.cwd, n), ''); load(); } }]);
+    items.push(['New folder…', () => newFolder(srvId, F, load)]);
+    items.push(['New file…', () => newFile(srvId, F, load)]);
   }
   items.push(['Refresh', () => load()]);
   ctxMenu(x, y, items.filter(x => x != null));
@@ -860,7 +864,7 @@ function fpane(srvId, F, onOther) {
       const f = items[r.dataset.i], p = pjoin(F.cwd, f.name);
       r.onclick = e => { if (!e.ctrlKey && !e.shiftKey) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); } F.sel.has(p) ? F.sel.delete(p) : F.sel.add(p); r.classList.toggle('sel', F.sel.has(p)); };
       r.ondblclick = () => f.dir || f.link && !f.size ? (F.cwd = p, load()) : isLocal ? null : editFile(srvId, p, F.useSudo);
-      r.ondragstart = e => { e.dataTransfer.setData('application/x-uc-row', JSON.stringify({ srv: srvId, path: p, dir: f.dir, local: isLocal })); e.dataTransfer.effectAllowed = 'copy'; };
+      r.ondragstart = e => { e.dataTransfer.setData('application/x-uc-row', JSON.stringify({ srv: srvId, path: p, dir: f.dir, local: isLocal, sudo: !isLocal && !!F.useSudo })); e.dataTransfer.effectAllowed = 'copy'; };
       const openFileCtx = (cx, cy) => {
         if (!F.sel.has(p)) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); F.sel.add(p); r.classList.add('sel'); }
         fileMenu(cx, cy, srvId, F, f, p, isLocal, load);
@@ -872,9 +876,9 @@ function fpane(srvId, F, onOther) {
   q('up').onclick = () => { F.cwd = pdir(F.cwd); load(); }; q('rf').onclick = load;
   const sudoCb = q('sudo'); if (sudoCb) { sudoCb.checked = !!F.useSudo; sudoCb.onchange = () => { F.useSudo = !!sudoCb.checked; load(); }; }
   if (isLocal) q('tools').style.display = 'none';
-  q('mk').onclick = async () => { const n = await prompt2('New folder name'); if (n) { await call('fs:mkdir', srvId, pjoin(F.cwd, n)); load(); } };
-  q('nf').onclick = async () => { const n = await prompt2('New file name'); if (n) { await call('fs:write', srvId, pjoin(F.cwd, n), ''); load(); } };
-  q('rn').onclick = async () => { const [p] = F.sel; if (!p) return toast('Select something first', true); const n = await prompt2('Rename to', p.split('/').pop()); if (n) { await call('fs:rename', srvId, p, pjoin(pdir(p), n)); load(); } };
+  q('mk').onclick = () => newFolder(srvId, F, load);
+  q('nf').onclick = () => newFile(srvId, F, load);
+  q('rn').onclick = async () => { const [p] = F.sel; if (!p) return toast('Select something first', true); const n = await prompt2('Rename to', p.split('/').pop()); if (n) { if (F.useSudo) await ensureSudoForFiles(srvId); await call('fs:rename', srvId, p, pjoin(pdir(p), n), F.useSudo || undefined); load(); } };
   q('rm').onclick = async () => {
     if (!F.sel.size) return toast('Select something first', true);
     if (!confirm(`Delete ${F.sel.size} item(s)? Folders are deleted with everything inside.`)) return;
@@ -889,7 +893,7 @@ function fpane(srvId, F, onOther) {
       load();
     }
   };
-  q('dl').onclick = async () => { if (!F.sel.size) return toast('Select something first', true); const d = await call('fs:download', srvId, [...F.sel]); if (d) toast('Downloaded to ' + d); };
+  q('dl').onclick = async () => { if (!F.sel.size) return toast('Select something first', true); if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId); const d = await call('fs:download', srvId, [...F.sel], F.useSudo || undefined); if (d) toast('Downloaded to ' + d); };
   const flist = node.querySelector('.flist');
   if (flist) {
     flist.oncontextmenu = e => {
@@ -910,9 +914,10 @@ function fpane(srvId, F, onOther) {
     if (row) { const r = JSON.parse(row); if (r.srv === srvId && pdir(r.path) === F.cwd) return;
       try {
         if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId);
+        if (r.sudo && !r.local) await ensureSudoForFiles(r.srv); // source pane has Use sudo on
         if (r.local) await call('fs:upload', srvId, [r.path], F.cwd, F.useSudo || undefined); // local file -> remote pane
-        else if (isLocal) await call('fs:downloadTo', r.srv, r.path, F.cwd); // remote file -> this device
-        else { const cx = 'c' + Date.now().toString(36); await call('fs:copy', r.srv, r.path, srvId, F.cwd, cx, F.useSudo || undefined); } // server -> server
+        else if (isLocal) await call('fs:downloadTo', r.srv, r.path, F.cwd, r.sudo || undefined); // remote file -> this device
+        else { const cx = 'c' + Date.now().toString(36); await call('fs:copy', r.srv, r.path, srvId, F.cwd, cx, (!isLocal && F.useSudo) || undefined, r.sudo || undefined); } // server -> server (dest sudo, source sudo)
         toast('Copied');
       } catch {} load(); onOther && onOther(); return; }
     const paths = [...e.dataTransfer.files].map(f => uc.pathFor(f)).filter(Boolean);
@@ -965,6 +970,11 @@ function pickList(title, labels, vals) { return new Promise(res => { // chooser:
 }); }
 
 
+/** New folder / new file in the pane's cwd — as root when the pane's Use sudo is on. */
+async function newFolder(srvId, F, load) { const n = await prompt2('New folder name'); if (!n) return;
+  if (F.useSudo) await ensureSudoForFiles(srvId); await call('fs:mkdir', srvId, pjoin(F.cwd, n), F.useSudo || undefined); load(); }
+async function newFile(srvId, F, load) { const n = await prompt2('New file name'); if (!n) return;
+  if (F.useSudo) await ensureSudoForFiles(srvId); await call('fs:write', srvId, pjoin(F.cwd, n), '', F.useSudo || undefined); load(); }
 /** Make sure the connection has a sudo (or login) password before a sudo file op. */
 async function ensureSudoForFiles(srvId) {
   const s = servers.find(x => x.id === srvId);

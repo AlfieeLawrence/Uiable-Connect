@@ -2,7 +2,7 @@
 // Uiable Connect for Docker: serves the same UI (../src) as a web app and implements the window.uc channels over
 // HTTP (POST /api/call, /api/send) + Server-Sent Events (/api/events), backed by lib/core.js (ssh2). No extra deps.
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), os = require('os');
-const { makeSession, testConnection, testSudo, sudoExec, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame, sudoRemove } = require('../lib/core');
+const { makeSession, testConnection, testSudo, sudoExec, jumpSock, listDockerPs, sudoReadText, sudoWriteText, sudoList, sudoUploadPath, sudoCopySame, sudoRemove, sudoMkdir, sudoRename, sudoStageOut, copyAcross, friendlyFsError } = require('../lib/core');
 const net = require('net');
 const { Store } = require('../lib/store');
 const { History } = require('../lib/history');
@@ -48,6 +48,8 @@ const fwdStatuses = (s, sess) => sess.forwardStatus ? (s.forwards || []).map(f =
 const withJump = async srv => { if ((!srv.connType || srv.connType === 'ssh') && srv.jumpId && srv.jumpId !== srv.id) {
   const j = store.full(srv.jumpId); if (j.jumpId === srv.id) delete j.jumpId; srv._sock = await jumpSock(j, srv.host, srv.port); } return srv; };
 const unJump = srv => { try { if (srv._sock) { srv._sock.destroy(); srv._sock._jumpClient && srv._sock._jumpClient.end(); } } catch {} };
+const spw = id => { const s = store.full(id); return s.sudoPassword || s.password || null; };
+const plain = p => Promise.resolve(p).catch(e => { throw friendlyFsError(e); });
 const H = {
   'servers:list': () => store.list().map(s => ({ ...s, connected: sessions.has(s.id) && !sessions.get(s.id).closed, fwdStatus: sessions.has(s.id) ? fwdStatuses(s, sessions.get(s.id)) : [] })),
   'servers:save': s => { const id = store.upsert(s); log(id, 'server-saved', `${s.username ? s.username + '@' : ''}${s.host || s.serialPath || ''}`); return id; },
@@ -106,12 +108,20 @@ const H = {
   'history:set': v => store.setSetting('history', !!v),
   'shell:open': async (id, sid, c, r, sudo) => { log(id, sudo ? 'shell-sudo' : 'shell'); if (!sudo) return S(id).openShell(sid, c, r);
     const srv = store.full(id); return S(id).openShell(sid, c, r, { sudo: true, password: srv.sudoPassword || srv.password || null }); },
-  'fs:home': id => S(id).home(), 'fs:list': async (id, p, sudo) => { if (!sudo) return S(id).list(p); const srv = store.full(id); return sudoList(S(id), p, srv.sudoPassword || srv.password || null); }, 'fs:mkdir': (id, p) => S(id).mkdir(p),
-  'fs:rename': (id, a, b) => S(id).rename(a, b), 'fs:remove': async (id, p, sudo) => { log(id, sudo ? 'remove-sudo' : 'remove', p); if (!sudo) return S(id).remove(p); const srv = store.full(id); return sudoRemove(S(id), p, srv.sudoPassword || srv.password || null); },
-  'fs:read': async (id, p, sudo) => { if (!sudo) return S(id).readText(p); const srv = store.full(id); return sudoReadText(S(id), p, srv.sudoPassword || srv.password || null); }, 'fs:write': async (id, p, t, sudo) => { if (!sudo) return S(id).writeText(p, t); log(id, 'write-sudo', p); const srv = store.full(id); return sudoWriteText(S(id), p, t, srv.sudoPassword || srv.password || null); },
-  'fs:copy': async (id, src, toId, dstDir, cx, sudo) => { if (toId === id) { if (sudo) { const srv = store.full(id); return sudoCopySame(S(id), String(src), String(dstDir), srv.sudoPassword || srv.password || null); } const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw new Error(r.err || 'copy failed'); return true; }
-    log(id, 'copy', `${src} -> ${toId}:${dstDir}`); const ab = { dead: false }; if (cx) copies.set(cx, ab);
-    try { return await S(id).copyTo(S(toId), String(src), String(dstDir), pr => emit({ id, ev: 'progress', cx, ...pr }), () => ab.dead); }
+  // Files: "Use sudo" on -> every op through the sudo helpers (never plain SFTP); plain SFTP permission errors get a friendly message.
+  'fs:home': id => S(id).home(),
+  'fs:list': async (id, p, sudo) => sudo ? sudoList(S(id), p, spw(id)) : plain(S(id).list(p)),
+  'fs:mkdir': async (id, p, sudo) => { if (sudo) { log(id, 'mkdir-sudo', p); return sudoMkdir(S(id), String(p), spw(id)); } return plain(S(id).mkdir(p)); },
+  'fs:rename': async (id, a, b, sudo) => { if (sudo) { log(id, 'rename-sudo', `${a} -> ${b}`); return sudoRename(S(id), String(a), String(b), spw(id)); } return plain(S(id).rename(a, b)); },
+  'fs:remove': async (id, p, sudo) => { log(id, sudo ? 'remove-sudo' : 'remove', p); return sudo ? sudoRemove(S(id), p, spw(id)) : plain(S(id).remove(p)); },
+  'fs:read': async (id, p, sudo) => sudo ? sudoReadText(S(id), p, spw(id)) : plain(S(id).readText(p)),
+  'fs:write': async (id, p, t, sudo) => { if (!sudo) return plain(S(id).writeText(p, t)); log(id, 'write-sudo', p); return sudoWriteText(S(id), p, t, spw(id)); },
+  'fs:copy': async (id, src, toId, dstDir, cx, sudo, srcSudo) => { const dst = S(toId);
+    if (toId === id) { if (sudo || srcSudo) { log(id, 'copy-sudo', `${src} -> ${dstDir}`); return sudoCopySame(S(id), String(src), String(dstDir), spw(id)); }
+      const q = x => "'" + String(x).replace(/'/g, `'\\''`) + "'"; const r = await S(id).exec(`cp -r -- ${q(src)} ${q(dstDir)}`); if (r.code) throw friendlyFsError(new Error(r.err || 'copy failed')); return true; }
+    log(id, sudo || srcSudo ? 'copy-sudo' : 'copy', `${src} -> ${toId}:${dstDir}`); const ab = { dead: false }; if (cx) copies.set(cx, ab);
+    try { return await plain(copyAcross(S(id), String(src), dst, String(dstDir), { srcSudo: !!srcSudo, srcPw: srcSudo ? spw(id) : null, dstSudo: !!sudo, dstPw: sudo ? spw(toId) : null },
+      pr => emit({ id, ev: 'progress', cx, ...pr }), () => ab.dead)); }
     finally { copies.delete(cx); } },
   'fs:cancel': cx => { const c = copies.get(cx); if (c) c.dead = true; return true; },
   'lfs:home': () => { throw new Error('Not available in the web version'); },
@@ -196,16 +206,24 @@ const server = http.createServer(async (req, res) => {
         log(id, 'upload-sudo', dest); return json(res, 200, { ok: true, data: true });
       }
       const sftp = await S(id).sftp();
-      await new Promise((ok, no) => { const w = sftp.createWriteStream(dest); w.on('error', no); w.on('close', ok); req.on('data', c => { t += c.length; if (Date.now() - last > 300) { last = Date.now(); emit({ id, ev: 'progress', name, t, tot }); } }); req.pipe(w); });
+      await plain(new Promise((ok, no) => { const w = sftp.createWriteStream(dest); w.on('error', no); w.on('close', ok); req.on('data', c => { t += c.length; if (Date.now() - last > 300) { last = Date.now(); emit({ id, ev: 'progress', name, t, tot }); } }); req.pipe(w); }));
       log(id, 'upload', dest); return json(res, 200, { ok: true, data: true }); }
 
-    if (p === '/api/download') { const id = u.searchParams.get('id'), rp = u.searchParams.get('path'); const s = S(id); const name = path.posix.basename(rp) || 'download';
-      log(id, 'download', rp);
-      if (await s.isDir(rp)) { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ucd-')); try { await s.download(rp, tmp);
-          res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${encodeURIComponent(name)}.tar.gz"` });
-          const t = require('child_process').spawn('tar', ['-C', tmp, '-czf', '-', name]); t.stdout.pipe(res); await new Promise(r => t.on('close', r)); } finally { fs.rmSync(tmp, { recursive: true, force: true }); } return; }
-      const sftp = await s.sftp(); res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` });
-      sftp.createReadStream(rp).on('error', () => res.destroy()).pipe(res); return; }
+    if (p === '/api/download') { const id = u.searchParams.get('id'), useSudo = u.searchParams.get('sudo') === '1'; let rp = u.searchParams.get('path'); const s = S(id); const name = path.posix.basename(rp) || 'download';
+      log(id, useSudo ? 'download-sudo' : 'download', rp);
+      let staged = null; // Use sudo: copy to a user-owned staging dir as root, then stream that over SFTP
+      try {
+        if (useSudo) { staged = await sudoStageOut(s, rp, spw(id)); rp = staged.path; }
+        if (await s.isDir(rp)) { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ucd-')); try { await s.download(rp, tmp);
+            res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${encodeURIComponent(name)}.tar.gz"` });
+            const t = require('child_process').spawn('tar', ['-C', tmp, '-czf', '-', path.basename(rp)]); t.stdout.pipe(res); await new Promise(r => t.on('close', r)); } finally { fs.rmSync(tmp, { recursive: true, force: true }); } return; }
+        const sftp = await s.sftp();
+        const st = await new Promise((ok, no) => sftp.stat(rp, (e, x) => e ? no(e) : ok(x))); // fail before headers so the error is readable
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': st.size, 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` });
+        await new Promise(ok => { const rs = sftp.createReadStream(rp); rs.on('error', () => { res.destroy(); ok(); }); res.on('close', ok); rs.pipe(res); });
+        return;
+      } catch (e) { if (!res.headersSent) { head(res, 403, 'text/plain; charset=utf-8'); return res.end((useSudo ? e : friendlyFsError(e)).message || String(e)); } res.destroy(); return; }
+      finally { if (staged) staged.cleanup(); } }
     // static files
     let f = p === '/' ? '/index.html' : p; if (f === '/index.html') { head(res, 200, TYPES['.html']); return res.end(INDEX); }
     const name = path.basename(f); const file = [path.join(WEB, name), path.join(SRC, name)].find(x => fs.existsSync(x) && path.dirname(f) === '/');

@@ -52,7 +52,7 @@
       const dl = fp.querySelector('[data-r="dl"]'); if (!dl || fp.querySelector('#upl')) return;
       const b = document.createElement('button'); b.className = 'sm primary'; b.id = 'upl'; b.textContent = '⇪ Upload'; dl.before(b);
       b.onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.multiple = true;
-        i.onchange = async () => { const f = [...i.files]; if (!f.length) return; await uc.call('fs:upload', cur(), f, S(cur()).f1.cwd).then(() => toast(`Uploaded ${f.length} item(s)`), e => toast(e.message, true)); fp.querySelector('[data-r="rf"]').click(); }; i.click(); };
+        i.onchange = async () => { const f = [...i.files]; if (!f.length) return; const F1 = S(cur()).f1; if (F1.useSudo && typeof ensureSudoForFiles === 'function') { try { await ensureSudoForFiles(cur()); } catch (e) { return toast(e.message, true); } } await uc.call('fs:upload', cur(), f, F1.cwd, F1.useSudo || undefined).then(() => toast(`Uploaded ${f.length} item(s)`), e => toast(e.message, true)); fp.querySelector('[data-r="rf"]').click(); }; i.click(); };
       const fl = fp.querySelector('[data-r="fl"]');
       fl.addEventListener('click', e => { const r = e.target.closest('tr[data-i]'); if (r && r.classList.contains('sel') && S(cur()).f1.sel.size === 1) { e.stopImmediatePropagation(); r.ondblclick(); } }, true);
     });

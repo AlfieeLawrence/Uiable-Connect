@@ -2,14 +2,15 @@
 // Small SFTP text editor: line numbers, monospace, Ctrl/Cmd+S, unsaved-changes guard. Plain text on purpose (stays light).
 // Size limit (2 MB) and binary refusal are enforced by fs:read on every platform.
 async function editFile(id, p, useSudo) {
-  let txt; try { txt = await uc.call('fs:read', id, p, !!useSudo); } catch (e) { return toast(e.message, true); }
+  useSudo = !!useSudo; // opened with Files' Use sudo -> plain Save / Ctrl+S also write as root (never plain SFTP)
+  let txt; try { if (useSudo && typeof ensureSudoForFiles === 'function') await ensureSudoForFiles(id); txt = await uc.call('fs:read', id, p, useSudo); } catch (e) { return toast(typeof friendlyErr === 'function' ? friendlyErr(e) : e.message, true); }
   const crlf = /\r\n/.test(txt); txt = txt.replace(/\r\n/g, '\n'); // textarea normalises line endings; restore them on save
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   const name = p.split('/').pop();
   const m = el(`<div class="modal-bg ed-bg"><div class="modal full editor-modal"><header><h3 class="grow mono ellipsis" title="${esc(p)}"><span class="ed-dirty"></span>${esc(name)}</h3><span class="muted small mono ellipsis ed-path">${esc(p)}</span></header>
     <div class="body ed-body"><div class="ed"><pre class="ed-gut" aria-hidden="true"></pre><textarea class="ed-ta" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea></div></div>
     <footer><span class="muted small mono ed-st"></span><span class="grow"></span><button id="c">Close</button>
-    <div class="split-btn"><button class="primary" id="sv">Save <span class="muted small">${mac ? '⌘S' : 'Ctrl+S'}</span></button><button class="primary split-caret" id="svmenu" title="More save options" aria-haspopup="true">▾</button>
+    <div class="split-btn"><button class="primary" id="sv"${useSudo ? ' title="Saves as root (Use sudo is on)"' : ''}>Save${useSudo ? ' (sudo)' : ''} <span class="muted small">${mac ? '⌘S' : 'Ctrl+S'}</span></button><button class="primary split-caret" id="svmenu" title="More save options" aria-haspopup="true">▾</button>
       <div class="split-menu hidden" id="svdrop"><button type="button" id="svsudo">Save as sudo</button></div></div></footer></div></div>`);
   document.body.append(m);
   const ta = m.querySelector('textarea'), gut = m.querySelector('.ed-gut'), st = m.querySelector('.ed-st'), dirty = m.querySelector('.ed-dirty');
@@ -21,7 +22,7 @@ async function editFile(id, p, useSudo) {
     gut.scrollTop = ta.scrollTop; };
   const later = () => { if (!raf) raf = requestAnimationFrame(update); };
   ta.addEventListener('input', later); ta.addEventListener('keyup', later); ta.addEventListener('click', later); ta.addEventListener('scroll', () => { gut.scrollTop = ta.scrollTop; });
-  const save = async (asSudo) => { if (saving) return; saving = true; const v = ta.value;
+  const save = async (asSudo) => { if (saving) return; saving = true; const v = ta.value; asSudo = !!asSudo || useSudo;
     try {
       if (asSudo && typeof ensureSudoForFiles === 'function') await ensureSudoForFiles(id);
       await call('fs:write', id, p, crlf ? v.replace(/\n/g, '\r\n') : v, !!asSudo);
