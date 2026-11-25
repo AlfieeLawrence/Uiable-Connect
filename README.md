@@ -86,6 +86,23 @@ Mobile limitations:
 - On iOS, use ed25519 keys or a password. RSA keys are refused by modern OpenSSH servers there, and PEM keys must be converted first with `ssh-keygen -p -f key`.
 - Downloads are held in memory before the share sheet opens, so very large files (hundreds of MB) are better fetched on desktop.
 
+## Changelog
+
+### 1.4.12
+- **Install Uiable asks twice.** A fresh install now needs two separate confirmations: first what will be installed (a privileged container with host access, the port, and the image download), then typing the server name or `INSTALL` and pressing a red Install button. Escape or clicking outside cancels; nothing runs until both are confirmed.
+- **Sudo password never shows in the terminal.** It no longer appears on screen, in scrollback or in shell history (desktop, Docker and mobile).
+- **Use sudo keeps your environment.** Your home folder, current folder, PATH and shell setup stay, so your usual commands work as root.
+- **New: Use root.** Hover over Use sudo (tap or long-press on touch) for a full root login. The toolbar shows green for sudo and red for root, and tabs get a matching tag.
+- **Use sudo / Use root reset to off** on every connect, disconnect, reconnect and reload.
+- **Capital letters fixed in the terminal.** Shift and Caps Lock capitals, spaces, £ and AltGr characters no longer go missing on Windows.
+- **Docker web version fixes:** the Docker button works, the notice bar no longer covers the tabs, toolbars line up, no gap is left when the Uiable tab is hidden, a ☰ server list at phone widths, and **Open here** loads Uiable inside the tab (needs Connect on plain http).
+- **Command palette:** Ctrl+K (⌘K on Mac), or Ctrl+Shift+K while typing in the terminal, to jump to any server, tab, container or setting, plus keyboard shortcuts (press ? for the list).
+- **Containers tab:** live list with CPU / memory sparklines, and a page per container with live logs, stats, environment (masked until revealed), ports, mounts, start / stop with Undo, restart and redeploy.
+- **Expandable graphs:** click an Overview graph for a full view with 1h / 6h / 24h / 7d ranges and min / average / max; longer ranges use Uiable's stored history when it is installed.
+- **Nicer everyday UI:** loading placeholders and friendly empty screens, Undo toasts instead of "are you sure?" for safe actions (typed confirmation for destructive ones), a notifications bell, live health dots in the server list, swipe between tabs and bigger touch targets on phones, a first-run tour and a getting-started checklist.
+- **Accessibility:** full keyboard navigation, visible focus rings, screen-reader labels and contrast fixes.
+- The app's keyboard shortcuts no longer fire while you type in the terminal (Ctrl+K goes to the shell).
+
 ## Releases
 GitHub Actions (`.github/workflows/release.yml`) builds Windows (portable + zip), macOS (dmg + zip, Intel + Apple Silicon), Android (debug APK + unsigned release APK) and iOS (unsigned `.ipa`, iPhone + iPad). It then attaches them all to the GitHub release.
 To cut a release, bump `"version"` in `package.json` (and `mobile/package.json`), commit, then run:

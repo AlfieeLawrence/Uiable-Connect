@@ -295,7 +295,7 @@ echo "envport=$EP"`, 15000).catch(() => ({ out: '' }));
     'sudo:exec': async (id, cmd, pw) => { await load(); const srv = (id === '_sudot' ? null : full(id)) || {}; const usePw = pw || srv.sudoPassword || srv.password;
       if (!usePw) return exec(id, `sudo -n sh -c ${sh(cmd)}`, 180000);
       const home = (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '~' }))).path;
-      const dir = home + '/.uiable-connect', pf = dir + '/.p';
+      const dir = home + '/.uiable-connect', pf = dir + '/.p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // unique: concurrent sudo ops
       try { await exec(id, `mkdir -p -m 700 ${sh(dir)}`, 15000);
         await Ssh.sftpWrite({ id, path: pf, data: bytesToB64(new TextEncoder().encode(usePw + '\n')), append: false });
         const r = await exec(id, `exec 3< ${sh(pf)}; rm -f ${sh(pf)}; sudo -S -p '' sh -c ${sh(cmd)} <&3`, 180000);
@@ -343,13 +343,17 @@ echo "envport=$EP"`, 15000).catch(() => ({ out: '' }));
     // sudo tab (terminal "Use sudo"): validate sudo once from a deleted password file (never typed into the PTY),
     // then exec a root login shell on the same tty (sudo's cached timestamp). Falls back to sudo's own prompt.
     'shell:open': async (id, sid, cols, rows, sudo) => { S(id); await Ssh.shellOpen({ id, sid, cols, rows }); if (!sudo) return sid;
-      await load(); const srv = full(id); const pw = srv.sudoPassword || srv.password; hlog(id, 'shell-sudo');
-      if (!pw) { await Ssh.shellWrite({ id, sid, data: ' exec sudo -i\n' }); return sid; }
+      await load(); const srv = full(id); const pw = srv.sudoPassword || srv.password; hlog(id, sudo === 'root' ? 'shell-root' : 'shell-sudo');
+      // root: full root login (sudo -i). sudo: root shell keeping your environment (sudo -E -s, or sudo -s if -E is refused).
+      const go = sudo === 'root' ? 'clear; exec sudo -i' : 'clear; RH=$(getent passwd root 2>/dev/null | cut -d: -f6); if sudo -n -E true 2>/dev/null; then HISTFILE="${RH:-/root}/.bash_history" exec sudo -E -s; else exec sudo -s; fi';
+      if (!pw) { await Ssh.shellWrite({ id, sid, data: ` ${go}\n` }); return sid; }
       const dir = (await homeOf(id)) + '/.uiable-connect', pf = dir + '/.s' + Date.now().toString(36);
       await exec(id, `mkdir -p -m 700 ${sh(dir)}`, 15000);
       await Ssh.sftpWrite({ id, path: pf, data: bytesToB64(new TextEncoder().encode(pw + '\n')), append: false });
       setTimeout(() => exec(id, `rm -f ${sh(pf)}`, 10000).catch(() => {}), 15000); // safety net if the shell never ran it
-      await Ssh.shellWrite({ id, sid, data: ` exec 3< ${sh(pf)}; rm -f ${sh(pf)}; sudo -S -p '' -v <&3 2>/dev/null; exec 3<&-; clear; exec sudo -i\n` });
+      // The password itself never goes through the PTY: sudo reads it from fd 3 (the file is already deleted).
+      // Leading space + exec: the line stays out of shell history; tty echo is off while the credential is cached.
+      await Ssh.shellWrite({ id, sid, data: ` stty -echo 2>/dev/null; exec 3< ${sh(pf)}; rm -f ${sh(pf)}; sudo -S -p '' -v <&3 >/dev/null 2>&1; exec 3<&-; stty echo 2>/dev/null; ${go}\n` });
       return sid; },
     'fs:home': async id => (await Ssh.sftpRealpath({ id, path: '.' }).catch(() => ({ path: '/' }))).path,
     'fs:list': async (id, p, sudo) => sudo ? sudoList(id, p) : (await plain(Ssh.sftpList({ id, path: p }))).items.map(i => ({ name: i.name, size: i.size, mtime: i.mtime * 1000, mode: i.mode,

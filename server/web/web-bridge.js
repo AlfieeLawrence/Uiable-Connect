@@ -17,7 +17,15 @@
     'notify:permission': async () => 'Notification' in window && (Notification.permission === 'granted' || (await Notification.requestPermission()) === 'granted'),
     'notify': async ({ title, body }) => { if (!('Notification' in window) || Notification.permission !== 'granted') return false; const n = new Notification(title, { body, icon: 'favicon.svg' }); n.onclick = () => { window.focus(); n.close(); }; return true; },
     'app:open': async url => { if (/^https:\/\/github\.com\//.test(url)) window.open(url, '_blank', 'noopener'); },
-    'uiable:open': async (id, mode, port) => { const r = await remote('uiable:open', [id, mode, port]); const url = `${location.protocol}//${location.hostname}:${r.port}/`; if (mode === 'browser' || mode === 'window') window.open(url, '_blank', 'noopener'); return url; },
+    // The tunnel is the Connect server's Uiable proxy on a published port of this same host. For a new tab, open the
+    // window synchronously (still inside the click) so popup blockers allow it, then point it at the dashboard.
+    'uiable:open': async (id, mode, port) => { const tab = mode === 'browser' || mode === 'window';
+      const w = tab ? window.open('', '_blank') : null; if (w) { try { w.opener = null; w.document.title = 'Uiable…'; } catch {} }
+      let r; try { r = await remote('uiable:open', [id, mode, port]); } catch (e) { if (w) w.close(); throw e; }
+      const host = location.hostname.includes(':') && !location.hostname.startsWith('[') ? `[${location.hostname}]` : location.hostname;
+      const url = `http://${host}:${r.port}/`; // the proxy speaks plain HTTP (put your own TLS proxy in front for HTTPS)
+      if (tab) { if (w) w.location.replace(url); else window.open(url, '_blank', 'noopener'); }
+      return url; },
   };
   async function remote(ch, a) { const r = await post('api/call', { ch, a }); if (r.status === 401) { location.href = 'login'; throw new Error('Signed out'); }
     const j = await r.json(); if (!j.ok) throw new Error(j.error); return j.data; }

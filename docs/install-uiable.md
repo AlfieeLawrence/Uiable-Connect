@@ -25,6 +25,15 @@ Before a fresh install you can choose:
 
 Updates keep existing port/bind from `/opt/uiable/.env` when present so day-to-day settings do not drift unexpectedly.
 
+## Two confirmations before a fresh install
+
+Installing Uiable gives it root-level control of the server, so a fresh install asks twice before anything runs:
+
+1. **What will be installed:** a privileged Docker container with full host access, the port and bind address it will listen on, and that it downloads the release and pulls / builds the Docker image (installing Docker first if it is missing).
+2. **A separate typed check:** type the server's name or `INSTALL`, then press the red **Install** button. **Cancel** is focused by default.
+
+Escape, Cancel or a click outside the dialog cancels at either step, and nothing is changed on the server. This applies everywhere Install Uiable appears (Overview card, the Uiable tab / getting-started checklist, desktop, Docker web and mobile). Updates of an existing install keep the single confirmation.
+
 ## What the job does
 
 After you confirm, Connect runs a **detached job on the server** and streams the log live.

@@ -4,24 +4,27 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self' http://127.0.0.1:* http://localhost:* http://*:8080 http://*:*; child-src 'self' http://127.0.0.1:* http://localhost:*">
 <title>Uiable Connect</title>
 <script src="theme-boot.js"></script>
-<link rel="stylesheet" href="base.css"><link rel="stylesheet" href="xterm.css"><link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="base.css"><link rel="stylesheet" href="xterm.css"><link rel="stylesheet" href="app.css"><link rel="stylesheet" href="ux.css">
 </head><body>
 <div id="wallpaper"></div>
 <div id="boot"><div class="boot-logo">Uiable <span>Connect</span></div><div class="boot-sub">Launching…</div></div>
 <div id="layout">
-  <aside id="side">
+  <a href="#main" class="skip-link">Skip to content</a>
+  <aside id="side" aria-label="Sidebar">
     <div class="brand row"><img class="brand-logo" src="favicon.svg" alt=""><div><b>Uiable</b> <span class="muted">Connect</span></div></div>
-    <div id="srvlist"></div>
+    <button type="button" id="cmdkB" class="cmdk-btn" aria-label="Search and commands" aria-keyshortcuts="Control+K Meta+K"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg><span class="grow">Search or jump to…</span><kbd>Ctrl K</kbd></button>
+    <nav id="srvlist" aria-label="Connections"></nav>
     <div class="side-foot">
       <button class="primary" id="addSrv">+ Add connection</button>
       <button id="quickB" title="Quick connect — one-off, not saved" aria-label="Quick connect"><svg class="foot-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 10-14h-7l1-6z"/></svg></button>
       <button id="bakB" title="Encrypted backup and restore" aria-label="Backup"><svg class="foot-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg></button>
+      <button id="bellB" data-bell title="Notifications (N)" aria-label="Notifications" aria-haspopup="dialog" aria-expanded="false"><svg class="foot-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17h12l-1.2-2.2a6.2 6.2 0 0 1-1.3-3.7V9a4.5 4.5 0 1 0-9 0v2.1c0 1.3-.45 2.6-1.3 3.7L6 17zm4.2 2.2a2 2 0 0 0 3.6 0"/></svg></button>
       <button id="setB" title="Settings" aria-label="Settings"><svg class="foot-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></svg></button>
     </div>
   </aside>
-  <main id="main"><div id="panes"></div></main>
+  <main id="main" tabindex="-1"><div id="panes"></div></main>
 </div>
 <div id="scrim"></div>
-<div id="toasts"></div>
-<script src="xterm.js"></script><script src="addon-fit.js"></script><script src="addon-search.js"></script><script src="health.js"></script><script src="alerts.js"></script><script src="editor.js"></script><script src="uiable-install.js"></script><script src="snippets.js"></script><script src="backup.js"></script><script src="app.js"></script>
+<div id="toasts" aria-live="polite" aria-relevant="additions"></div>
+<script src="xterm.js"></script><script src="addon-fit.js"></script><script src="addon-search.js"></script><script src="health.js"></script><script src="alerts.js"></script><script src="editor.js"></script><script src="uiable-install.js"></script><script src="snippets.js"></script><script src="backup.js"></script><script src="ux.js"></script><script src="containers.js"></script><script src="metric-detail.js"></script><script src="app.js"></script>
 </body></html>

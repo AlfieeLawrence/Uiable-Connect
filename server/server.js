@@ -50,6 +50,48 @@ const withJump = async srv => { if ((!srv.connType || srv.connType === 'ssh') &&
 const unJump = srv => { try { if (srv._sock) { srv._sock.destroy(); srv._sock._jumpClient && srv._sock._jumpClient.end(); } } catch {} };
 const spw = id => { const s = store.full(id); return s.sudoPassword || s.password || null; };
 const plain = p => Promise.resolve(p).catch(e => { throw friendlyFsError(e); });
+// ---- Uiable dashboard proxy (web build). The raw SSH forward listens on a private loopback port; the
+// published port (default 8080) is an HTTP + WebSocket proxy in front of it that only rewrites the
+// framing headers, so the Uiable tab can show the dashboard in an <iframe>. Cookies, Host and Origin
+// pass through untouched, so Uiable's own login, CSRF and same-origin checks work as usual.
+const UI_INT = 'uiable-int';
+const cleanHost = h => { h = String(h || '').trim(); return /^[a-z0-9.\-]+(:\d+)?$|^\[[0-9a-f:.]+\](:\d+)?$/i.test(h) ? h : ''; };
+function connectOrigins(req) { const out = new Set(); if (!req) return out;
+  try { const o = req.headers.origin && new URL(req.headers.origin); if (o && /^https?:$/.test(o.protocol)) out.add(o.origin); } catch {}
+  const h = cleanHost(req.headers.host); if (h) { out.add('http://' + h); out.add('https://' + h); }
+  return out; }
+const HOP = ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'];
+function frameHeaders(h, anc) { const o = { ...h }; for (const k of HOP) delete o[k]; delete o['x-frame-options'];
+  const fa = 'frame-ancestors ' + ["'self'", ...anc].join(' ');
+  if (o['content-security-policy']) o['content-security-policy'] = [].concat(o['content-security-policy']).map(v => /frame-ancestors/i.test(v) ? v.replace(/frame-ancestors[^;]*/i, fa) : v + '; ' + fa);
+  return o; }
+async function startUiableProxy(sess, f, anc) {
+  if (!sess.startForward) throw new Error('Uiable needs an SSH connection');
+  const ex = sess.forwards.get(f.id);
+  if (ex && ex.uiProxy && +ex.def.remotePort === +f.remotePort && +ex.def.localPort === +f.localPort && sess.forwards.has(UI_INT)) {
+    for (const a of anc) ex.anc.add(a); return sess.forwardStatus(f.id); }
+  if (ex) sess.stopForward(f.id); sess.stopForward(UI_INT);
+  await sess.startForward({ id: UI_INT, localPort: 0, remoteHost: f.remoteHost, remotePort: f.remotePort, bind: '127.0.0.1' });
+  const ip = sess.forwards.get(UI_INT).server.address().port;
+  const st = { id: f.id, conns: 0, bytes: 0, error: null, socks: new Set() }, ancSet = new Set(anc);
+  const srv = http.createServer((req, res) => {
+    const up = http.request({ host: '127.0.0.1', port: ip, method: req.method, path: req.url, headers: req.headers }, r => {
+      res.writeHead(r.statusCode, r.statusMessage, frameHeaders(r.headers, ancSet)); r.pipe(res); });
+    up.on('error', e => { st.error = e.message; if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Uiable is not reachable through the SSH tunnel: ' + e.message); });
+    req.pipe(up);
+  });
+  srv.on('upgrade', (req, sock, head) => { // websockets (/ws/stats, /ws/terminal, /ws/logs): replay the request, then splice
+    const up = net.connect(ip, '127.0.0.1', () => { let h = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+      for (let i = 0; i < req.rawHeaders.length; i += 2) h += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+      up.write(h + '\r\n'); if (head && head.length) up.write(head); up.pipe(sock); sock.pipe(up); });
+    up.on('error', () => sock.destroy()); sock.on('error', () => up.destroy()); sock.on('close', () => up.destroy()); up.on('close', () => sock.destroy()); });
+  srv.on('connection', c => { st.conns++; st.socks.add(c); c.on('close', () => { st.socks.delete(c); st.conns = Math.max(0, st.conns - 1); }); });
+  srv.on('close', () => { if (!sess.forwards.get(f.id) || sess.forwards.get(f.id).server === srv) sess.stopForward(UI_INT); });
+  try { await new Promise((ok, no) => { srv.once('error', e => no(new Error(e.code === 'EADDRINUSE' ? `Port ${f.localPort} is already in use inside the container` : e.message))); srv.listen(Number(f.localPort), FWD_BIND, ok); }); }
+  catch (e) { sess.stopForward(UI_INT); throw e; }
+  sess.forwards.set(f.id, { server: srv, st, def: f, uiProxy: true, anc: ancSet });
+  return sess.forwardStatus(f.id);
+}
 const H = {
   'servers:list': () => store.list().map(s => ({ ...s, connected: sessions.has(s.id) && !sessions.get(s.id).closed, fwdStatus: sessions.has(s.id) ? fwdStatuses(s, sessions.get(s.id)) : [] })),
   'servers:save': s => { const id = store.upsert(s); log(id, 'server-saved', `${s.username ? s.username + '@' : ''}${s.host || s.serialPath || ''}`); return id; },
@@ -92,10 +134,14 @@ const H = {
   'sudo:exec': (id, cmd, pw) => { log(id, 'exec-sudo', cmd); const srv = store.full(id); return sudoExec(S(id), String(cmd), pw || srv.sudoPassword || srv.password || null, { timeout: 180000 }); },
   'uiable:detect': (id, port) => S(id).detectUiable ? S(id).detectUiable(port) : { reachable: false },
   'uiable:latest': latestUiable,
-  'uiable:open': async (id, _mode, port) => { const srv = store.list().find(x => x.id === id);
+  // Same published port as before, but served by a small header-rewriting proxy so the dashboard can also
+  // load in Connect's Uiable tab (iframe). Uiable sends X-Frame-Options: DENY / frame-ancestors 'none';
+  // the proxy relaxes that to this Connect page's origin only. Browser / new-tab use is unchanged.
+  'uiable:open': async function (id, _mode, port) { const srv = store.list().find(x => x.id === id);
+    if (!srv) throw new Error('Unknown connection');
     const saved = (srv.forwards || []).find(x => x.id === 'uiable') || {};
     const f = { id: 'uiable', localPort: saved.localPort || 8080, remoteHost: '127.0.0.1', remotePort: Number(port) || saved.remotePort || 8080 };
-    checkFwdPort(f); await S(id).startForward({ ...f, bind: FWD_BIND }); return { port: f.localPort }; },
+    checkFwdPort(f); await startUiableProxy(S(id), f, connectOrigins(this && this.req)); return { port: f.localPort }; },
   'app:update': async () => { const r = await fetch('https://api.github.com/repos/AlfieeLawrence/uiable-connect/releases/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Uiable-Connect' }, signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null; const j = await r.json(); return { current: VERSION, latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url }; },
   'app:selfupdate': () => ({ docker: true }), // update = pull the new image; the UI shows the commands
@@ -106,8 +152,8 @@ const H = {
   'history:clear': () => hist.clear(),
   'history:get': () => store.setting('history', true),
   'history:set': v => store.setSetting('history', !!v),
-  'shell:open': async (id, sid, c, r, sudo) => { log(id, sudo ? 'shell-sudo' : 'shell'); if (!sudo) return S(id).openShell(sid, c, r);
-    const srv = store.full(id); return S(id).openShell(sid, c, r, { sudo: true, password: srv.sudoPassword || srv.password || null }); },
+  'shell:open': async (id, sid, c, r, sudo) => { log(id, sudo === 'root' ? 'shell-root' : sudo ? 'shell-sudo' : 'shell'); if (!sudo) return S(id).openShell(sid, c, r);
+    const srv = store.full(id); return S(id).openShell(sid, c, r, { sudo: true, root: sudo === 'root', password: srv.sudoPassword || srv.password || null }); },
   // Files: "Use sudo" on -> every op through the sudo helpers (never plain SFTP); plain SFTP permission errors get a friendly message.
   'fs:home': id => S(id).home(),
   'fs:list': async (id, p, sudo) => sudo ? sudoList(S(id), p, spw(id)) : plain(S(id).list(p)),
@@ -167,7 +213,9 @@ const INDEX = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8')
 const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api.github.com; frame-ancestors 'none'";
 const LOGIN = err => `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Uiable Connect</title><link rel="stylesheet" href="base.css"></head>
 <body style="display:grid;place-items:center;min-height:100vh"><form method="post" action="login" class="card" style="width:320px"><h3>Uiable Connect</h3>${err ? '<p class="pill err">Wrong password</p>' : ''}<label class="field"><span>Password</span><input type="password" name="password" autofocus></label><button class="primary" style="width:100%;justify-content:center">Sign in</button></form></body></html>`;
-const head = (res, code, type, extra = {}) => res.writeHead(code, { 'Content-Type': type, 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-cache', ...extra });
+// frame-src: the Uiable tab frames the dashboard proxy on another published port of the same host
+const cspFor = res => { const h = cleanHost(res.req && res.req.headers.host).replace(/:\d+$/, ''); return h ? CSP + `; frame-src 'self' http://${h}:* https://${h}:*` : CSP; };
+const head = (res, code, type, extra = {}) => res.writeHead(code, { 'Content-Type': type, 'Content-Security-Policy': cspFor(res), 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-cache', ...extra });
 const body = (req, max = 64 * 1024 * 1024) => new Promise((ok, no) => { const b = []; let n = 0; req.on('data', c => { n += c.length; if (n > max) { no(new Error('Too large')); req.destroy(); } else b.push(c); }); req.on('end', () => ok(Buffer.concat(b))); req.on('error', no); });
 const json = (res, code, o) => { head(res, code, 'application/json'); res.end(JSON.stringify(o)); };
 
@@ -190,7 +238,7 @@ const server = http.createServer(async (req, res) => {
       clients.add(res); const t = setInterval(() => res.write(': ping\n\n'), 25000); req.on('close', () => { clearInterval(t); clients.delete(res); }); return; }
     if (p === '/api/call' && req.method === 'POST') { const { ch, a } = JSON.parse((await body(req, 16 * 1024 * 1024)).toString());
       const fn = Object.prototype.hasOwnProperty.call(H, ch) && H[ch]; if (!fn) return json(res, 404, { ok: false, error: 'Unknown channel ' + ch });
-      try { return json(res, 200, { ok: true, data: await fn(...(Array.isArray(a) ? a : [])) }); } catch (e) { return json(res, 200, { ok: false, error: e.message || String(e) }); } }
+      try { return json(res, 200, { ok: true, data: await fn.apply({ req }, Array.isArray(a) ? a : []) }); } catch (e) { return json(res, 200, { ok: false, error: e.message || String(e) }); } }
     if (p === '/api/send' && req.method === 'POST') { for (const [ch, ...a] of JSON.parse((await body(req, 4 * 1024 * 1024)).toString())) { const f = Object.prototype.hasOwnProperty.call(SEND, ch) && SEND[ch]; if (f) f(...a); } res.writeHead(204); return res.end(); }
     if (p === '/api/upload' && req.method === 'POST') { const id = u.searchParams.get('id'), dest = u.searchParams.get('path'), useSudo = u.searchParams.get('sudo') === '1';
       const tot = Number(req.headers['content-length']) || 0; let t = 0, last = 0; const name = dest.split('/').pop();

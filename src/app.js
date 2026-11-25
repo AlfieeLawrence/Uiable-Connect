@@ -36,10 +36,27 @@ let panes = [{ srv: null, tab: 'overview' }];
 let focusPane = 0;
 try { const p = JSON.parse(localStorage.getItem('uc.panes') || 'null'); if (Array.isArray(p) && p.length) panes = p.slice(0, 2).map(x => ({ srv: x.srv || null, tab: x.tab || 'overview' })); } catch {}
 const ON_MOBILE = !!window.UC_MOBILE;
+const ON_WEB = !!window.UC_WEB && !ON_MOBILE; // Docker / browser build (server/web/web-bridge.js)
+// Narrow browser windows (<= 760px) turn the sidebar into a drawer. The phone app adds its own burger (mobile.js);
+// the desktop/web UI gets this one, shown by CSS only at drawer widths.
+const WBURGER = ON_MOBILE ? '' : '<button class="sm burger wburger" title="Connections" aria-label="Show connections">☰</button>';
+if (!ON_MOBILE) {
+  const drawer = v => document.body.classList.toggle('drawer-open', v);
+  document.addEventListener('click', e => {
+    if (e.target.closest('.wburger')) return drawer(!document.body.classList.contains('drawer-open'));
+    if (e.target.closest('#scrim') || (e.target.closest('#side .srv, #side .side-foot button') && matchMedia('(max-width: 760px)').matches)) drawer(false);
+  }, true); // capture: the server list re-renders on click, which would detach the target before a bubbling listener runs
+}
 if (ON_MOBILE) panes = [panes[0]];
 const persistPanes = () => localStorage.setItem('uc.panes', JSON.stringify(panes));
 const cur = () => panes[focusPane] && panes[focusPane].srv;
 const curSrv = () => servers.find(s => s.id === cur());
+// "Use sudo" (terminal + Files) is a per-connection-session choice: it is never stored anywhere (only this
+// in-memory state) and is switched OFF whenever a connection is opened, reopened or closed — including a
+// peer pane in another connection's Files view that points at this server. The saved sudo password stays.
+const resetSudo = id => { for (const [k, u] of Object.entries(st)) {
+  if (k === id) { u.termUseSudo = false; u.termRoot = false; if (u.f1) u.f1.useSudo = false; if (u.f2 && u.peer === id) u.f2.useSudo = false; }
+  else if (u.peer === id && u.f2) u.f2.useSudo = false; } };
 const anyPane = (id, tab) => panes.some(p => p.srv === id && p.tab === tab);
 const isSsh = s => !s || !s.connType || s.connType === 'ssh';
 const hasUiableTab = s => {
@@ -49,7 +66,7 @@ const hasUiableTab = s => {
 };
 const TABS = s => {
   if (!isSsh(s)) return ['terminal', 'history'];
-  const tabs = ['overview', 'terminal', 'files', 'forwards', 'health', 'alerts', 'history'];
+  const tabs = ['overview', 'terminal', 'files', 'containers', 'forwards', 'health', 'alerts', 'history'];
   if (hasUiableTab(s)) tabs.push('uiable'); // next to History
   return tabs;
 };
@@ -61,7 +78,8 @@ async function refresh() { servers = await uc.call('servers:list');
   renderSide(); renderMain(); }
 function renderSide() {
   const host = $('#srvlist');
-  host.innerHTML = servers.length ? '' : '<p class="muted small" style="padding:8px">No connections yet.</p>';
+  host.innerHTML = '';
+  if (!servers.length) host.append(UX.empty({ compact: true, ico: 'server', title: 'No connections yet', text: 'Add a server to get started.', actions: [{ label: 'Add connection', primary: true, ico: 'plus', run: () => editServer() }] }));
   // group headers (collapsible); ungrouped connections sit at the top
   const groups = new Map(); for (const s of servers) { const g = s.group || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(s); }
   const names = [...groups.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
@@ -71,7 +89,9 @@ function renderSide() {
       h.onclick = () => { col[g] = !col[g]; localStorage.setItem('uc.gcol', JSON.stringify(col)); renderSide(); }; host.append(h);
       if (col[g]) continue; }
     for (const s of groups.get(g)) {
-      const n = el(`<div class="srv ${panes.some(p => p.srv === s.id) ? 'active' : ''} ${s.quick ? 'quick' : ''}"><span class="dot ${s.connected ? 'on' : ''}"></span><div class="t"><b>${esc(s.name || s.host || s.serialPath)}</b><span class="muted small">${connLabel(s)}</span></div></div>`);
+      const lv = UX.level(s);
+      const n = el(`<div class="srv ${panes.some(p => p.srv === s.id) ? 'active' : ''} ${s.quick ? 'quick' : ''}" data-id="${esc(s.id)}" role="button" tabindex="0" aria-current="${panes[focusPane] && panes[focusPane].srv === s.id ? 'true' : 'false'}"><span class="dot ${s.connected ? 'on' : ''} lv-${lv}" title="${UX.LV[lv]}" role="img" aria-label="${UX.LV[lv]}"></span><div class="t"><b>${esc(s.name || s.host || s.serialPath)}</b><span class="muted small">${connLabel(s)}</span>${UX.sideLive(s)}</div></div>`);
+      n.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); n.click(); } if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); const r = n.getBoundingClientRect(); srvMenu(r.left + 20, r.bottom, s); } };
       n.onclick = () => { panes[focusPane].srv = s.id; const t = TABS(s); if (!t.includes(panes[focusPane].tab)) panes[focusPane].tab = t[0]; renderSide(); renderMain(); };
       n.oncontextmenu = e => { e.preventDefault(); srvMenu(e.clientX, e.clientY, s); };
       let lp = null; // long-press opens the same menu on touch devices (no right-click)
@@ -80,6 +100,7 @@ function renderSide() {
       host.append(n);
     }
   }
+  UX.renderChecklist();
 }
 function openSrvTab(s, tab) {
   panes[focusPane].srv = s.id; const tabs = TABS(s);
@@ -103,9 +124,12 @@ function srvMenu(x, y, s) {
     ['Edit', () => editServer(s)],
     ['Duplicate', async () => { await call('servers:dup', s.id); refresh(); }],
     s.hostKey ? ['Forget host key', async () => { await call('servers:clearhostkey', s.id); toast('Host key forgotten — it will be asked again on next connect'); refresh(); }] : null,
-    ['Delete', async () => { if (!confirm(`Delete ${s.name || s.host}?`)) return; await call(s.quick ? 'servers:purgetemp' : 'servers:delete', s.id); delete st[s.id]; panes.forEach(p => { if (p.srv === s.id) p.srv = null; }); refresh(); }],
+    ['Delete…', async () => { if (!await confirmDeleteServer(s)) return; await call(s.quick ? 'servers:purgetemp' : 'servers:delete', s.id); delete st[s.id]; panes.forEach(p => { if (p.srv === s.id) p.srv = null; }); refresh(); }],
   ].filter(x => x != null));
 }
+// Deleting a connection removes its saved credentials, forwards and alert rules: the name must be typed.
+const confirmDeleteServer = s => UX.confirm({ title: `Delete ${s.name || s.host}?`, danger: true, ok: 'Delete connection', typed: s.name || s.host || 'delete',
+  body: `<p>This removes the saved connection <b>${esc(s.name || s.host)}</b> from this device, including its saved password, sudo password, port forwards and alert rules. Nothing on the server is changed.</p>` });
 // ---------- clipboard (Electron: native clipboard via preload; browser/mobile: navigator.clipboard)
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const clip = { read: async () => uc.clip ? uc.clip.read() : navigator.clipboard.readText(), write: async t => uc.clip ? uc.clip.write(t) : navigator.clipboard.writeText(t) };
@@ -129,14 +153,30 @@ function ctxMenu(x, y, items) {
 }
 // Mac: Cmd+C copies, Cmd+V pastes (via the Edit menu's paste role -> native paste event). Win/Linux: Ctrl+Shift+C/V,
 // Ctrl+Insert / Shift+Insert. Plain Ctrl+C still sends ^C to the server. Right-click menu everywhere.
+// Typed characters: printable keys are sent from keydown using e.key, which already has Shift, Caps Lock and the
+// keyboard layout (UK £ " @ # ~, AltGr €) applied. xterm 5.5 handles a-z itself on keydown but defers capitals A-Z
+// and Space to the later keypress/input event and leaves them in its hidden textarea. When that second event is
+// lost (Windows IME/text suggestions, touch keyboards, anything that eats keypress), Shift/Caps Lock capitals went
+// missing, and a later IME keystroke (keyCode 229) re-sent the leftover textarea text. IME composition, dead keys
+// and Mac Option characters still go through xterm's own handling.
+function termTypedKey(term, e, st) {
+  if (e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Unidentified') return false; // IME owns it
+  if (e.key === 'Dead') { st.dead = true; return false; }
+  if (st.dead) { st.dead = false; return false; } // let xterm finish the dead-key sequence (é, ñ ...)
+  if (e.metaKey || [...e.key].length !== 1) return false;
+  const altGr = !!(e.getModifierState && e.getModifierState('AltGraph')) && !/^[a-z]$/i.test(e.key); // Windows AltGr = Ctrl+Alt
+  if ((e.ctrlKey || e.altKey) && !altGr) return false; // Ctrl/Alt combos: xterm builds ^X / ESC x
+  e.preventDefault(); term.input(e.key, true); return true;
+}
 function termClipboard(term, node) {
-  const paste = () => clip.read().then(t => t && term.paste(t));
+  const paste = () => clip.read().then(t => t && term.paste(t)); const keySt = { dead: false };
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true; const k = e.key.toLowerCase();
     if ((IS_MAC && e.metaKey && k === 'c') || (e.ctrlKey && e.shiftKey && k === 'c') || (e.ctrlKey && k === 'insert')) { const t = term.getSelection(); if (t) clip.write(t).catch(() => {}); e.preventDefault(); return false; }
     if (IS_MAC && e.metaKey && k === 'v') return false; // browser/menu paste event -> xterm handles it once
     if ((e.ctrlKey && e.shiftKey && k === 'v') || (e.shiftKey && k === 'insert')) { e.preventDefault(); paste().catch(() => {}); return false; }
     if (IS_MAC && e.metaKey && k === 'a') { term.selectAll(); return false; }
+    if (termTypedKey(term, e, keySt)) return false;
     return true;
   });
   node.addEventListener('contextmenu', e => { e.preventDefault(); const sel = term.getSelection();
@@ -164,6 +204,7 @@ function onStats(s, x) {
     diskW: x.diskIO && x.diskIO.write != null ? +x.diskIO.write : null,
   });
   if (u.statsHist.length > 600) u.statsHist = u.statsHist.slice(-600);
+  if (UX.liveOn()) UX.refreshSideLive();
   for (const m of evalAlerts(s, x)) raiseAlert(s, m);
 }
 function sparkline(vals, w = 160, h = 40, stroke = 'var(--accent)') {
@@ -195,9 +236,10 @@ function histStats(vals) {
 setInterval(async () => {
   for (const s of servers) {
     const u = S(s.id); if (!s.connected || !isSsh(s) || u.statsBusy || Date.now() - (u.statsAt || 0) < 9000) continue;
-    if (!rulesFor(s).some(r => r.enabled && r.metric !== 'disconnect')) continue;
+    if (!UX.liveOn() && !rulesFor(s).some(r => r.enabled && r.metric !== 'disconnect')) continue;
     u.statsBusy = true; try { onStats(s, await uc.call('stats', s.id)); } catch {} u.statsBusy = false;
   }
+  UX.refreshSideLive();
 }, 10000);
 
 // ---------- panes / main layout
@@ -212,17 +254,27 @@ function renderMain() {
 function renderPane(sec, p, i) {
   const s = servers.find(x => x.id === p.srv);
   if (!s) {
-    sec.innerHTML = `<div class="pane-head empty-head"></div><div class="empty"><div><h1>Uiable Connect</h1><p class="muted">Add a connection to open a terminal, browse files, check health and forward ports.<br>Works with or without Uiable on the server.</p><button class="primary" data-act="add">+ Add connection</button></div></div>`;
+    sec.innerHTML = `<div class="pane-head empty-head">${WBURGER}</div><div class="empty welcome"></div>`;
+    $('.empty', sec).append(UX.empty({ ico: 'server', title: servers.length ? 'Pick a connection' : 'Welcome to Uiable Connect', text: servers.length ? 'Choose a server from the list, or add a new one.' : 'Add a server to open a terminal, browse files, manage containers, check health and forward ports. Works with or without Uiable on the server.', actions: [
+      { label: 'Add connection', primary: true, ico: 'plus', run: () => editServer() }, { label: 'Quick connect', ico: 'bolt', run: () => quickDialog() },
+      !ON_MOBILE ? { label: 'Restore a backup', ico: 'upd', run: () => backupDialog() } : null, { label: 'Take the tour', ico: 'map', run: () => UX.tour(true) }] }));
     return;
   }
   const u = S(s.id), tabs = TABS(s);
-  sec.innerHTML = `<div class="pane-head"><span class="pdot ${s.connected ? 'on' : ''}"></span><div class="grow" style="min-width:0"><div class="ph-name ellipsis">${esc(s.name || s.host || s.serialPath)}${s.group ? ` <span class="gtag">${esc(s.group)}</span>` : ''}</div><div class="ph-sub ellipsis">${u.lat ? u.lat + ' ms · ' : ''}${connLabel(s)}${s.jumpId ? ' ⇢ via ' + esc(servers.find(j => j.id === s.jumpId)?.name || 'jump host') + ' · ' : ''}${isSsh(s) ? ({ password: 'password', key: 'SSH key', keypass: 'key + password' }[s.auth] || s.auth) : ''}</div></div>
-    ${panes.length > 1 ? '<button class="sm" id="pclose" title="Close this pane">✕</button>' : ''}
-    ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side">⿻</button>' : ''}
+  // Phones: the bottom bar keeps 4 sections + More (the current section always stays visible)
+  const narrow = matchMedia('(max-width: 760px)').matches;
+  let shownTabs = tabs;
+  if (narrow && tabs.length > 5) { shownTabs = ['overview', 'terminal', 'files', 'containers'].filter(t => tabs.includes(t)); if (!shownTabs.includes(p.tab)) shownTabs[shownTabs.length - 1] = p.tab; shownTabs = [...shownTabs, '__more']; }
+  sec.innerHTML = `<div class="pane-head">${WBURGER}<span class="pdot ${s.connected ? 'on' : ''}"></span><div class="grow" style="min-width:0"><div class="ph-name ellipsis">${esc(s.name || s.host || s.serialPath)}${s.group ? ` <span class="gtag">${esc(s.group)}</span>` : ''}</div><div class="ph-sub ellipsis">${u.lat ? u.lat + ' ms · ' : ''}${connLabel(s)}${s.jumpId ? ' ⇢ via ' + esc(servers.find(j => j.id === s.jumpId)?.name || 'jump host') : ''}${isSsh(s) && s.auth ? ' · ' + esc({ password: 'password', key: 'SSH key', keypass: 'key + password' }[s.auth] || s.auth) : ''}</div></div>
+    ${i === 0 ? `<button type="button" class="sm icon-btn ph-cmdk" aria-label="Search and commands (${UX.MOD} K)" title="Search and commands (${UX.MOD} K)">${UX.icon('search')}</button><button type="button" class="sm icon-btn ph-bell" data-bell aria-label="Notifications" aria-haspopup="dialog" aria-expanded="false">${UX.icon('bell')}</button>` : ''}
+    ${panes.length > 1 ? '<button class="sm" id="pclose" title="Close this pane" aria-label="Close this pane">✕</button>' : ''}
+    ${!ON_MOBILE && panes.length < 2 ? '<button class="sm" id="psplit" title="Show two panes side by side" aria-label="Split view">⿻</button>' : ''}
     <button class="sm" id="edit">Edit</button>${s.connected ? '<button class="sm danger" id="disc">Disconnect</button>' : `${s.mac ? '<button class="sm" id="wake" title="Send a Wake-on-LAN packet">⚡ Wake</button>' : ''}<button class="primary sm" id="conn">Connect</button>`}</div>
-    <div class="tabs"><div class="seg">${tabs.map(t => { const short = ({ overview:'Home', terminal:'Term', files:'Files', forwards:'Ports', health:'Health', alerts:'Alerts', history:'Hist', uiable:'Uiable' }[t] || t);
-    const label = ON_MOBILE ? short : (t[0].toUpperCase() + t.slice(1));
-    const icon = ON_MOBILE ? ({
+    <div class="tabs"><div class="seg" role="tablist" aria-label="Sections">${shownTabs.map(t => { const short = ({ overview:'Home', terminal:'Term', files:'Files', containers:'Docker', forwards:'Ports', health:'Health', alerts:'Alerts', history:'Hist', uiable:'Uiable' }[t] || t);
+    const label = (ON_MOBILE || narrow) ? short : (t[0].toUpperCase() + t.slice(1));
+    if (t === '__more') return `<button type="button" data-more class="${tabs.includes(p.tab) && !shownTabs.includes(p.tab) ? 'active' : ''}" aria-haspopup="dialog" title="More sections">${UX.icon('more', 'ticon')}<span class="tlab">More</span></button>`;
+    const icon = ({
+      containers: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>',
       overview: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>',
       terminal: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5 10 12 4 17.5M12 18h8"/></svg>',
       files: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5V19a1.5 1.5 0 0 0 1.5 1.5h14A1.5 1.5 0 0 0 20.5 19V9.5A1.5 1.5 0 0 0 19 8h-7.2L9.5 5.5H5A1.5 1.5 0 0 0 3.5 7.5z"/></svg>',
@@ -231,20 +283,26 @@ function renderPane(sec, p, i) {
       alerts: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17h12l-1.2-2.2a6.2 6.2 0 0 1-1.3-3.7V9a4.5 4.5 0 1 0-9 0v2.1c0 1.3-.45 2.6-1.3 3.7L6 17zm4.2 1.2a2 2 0 0 0 3.6 0"/></svg>',
       history: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3.2 2"/></svg>',
       uiable: '<svg class="ticon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7 9.5h10M7 12.5h7"/></svg>',
-    }[t] || '') : '';
-    return `<button data-t="${t}" class="${p.tab === t ? 'active' : ''}" title="${t}">${icon}<span class="tlab">${label}</span></button>`; }).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
+    }[t] || '');
+    return `<button type="button" role="tab" aria-selected="${p.tab === t}" data-t="${t}" class="${p.tab === t ? 'active' : ''}" title="${UX.TAB_LABEL[t] || t}${tabs.indexOf(t) < 9 ? ' (Alt ' + (tabs.indexOf(t) + 1) + ')' : ''}">${icon}<span class="tlab">${label}</span></button>`; }).join('')}</div><span class="spacer"></span><span id="uiPill"></span></div>
     <div class="view" id="view"></div>`;
   $('#edit', sec).onclick = () => editServer(s);
   if ($('#conn', sec)) $('#conn', sec).onclick = () => connect(s.id);
   const wk = $('#wake', sec); if (wk) wk.onclick = () => call('net:wol', s.id).then(() => toast('Wake packet sent — give it a moment, then connect'));
-  if ($('#disc', sec)) $('#disc', sec).onclick = async () => { u.userClosed = true; await call(s.quick ? 'servers:purgetemp' : 'conn:disconnect', s.id); u.terms.forEach(t => t.term.dispose()); u.terms = []; u.uiable = null; refresh(); };
+  if ($('#disc', sec)) $('#disc', sec).onclick = async () => { u.userClosed = true; await call(s.quick ? 'servers:purgetemp' : 'conn:disconnect', s.id); u.terms.forEach(t => t.term.dispose()); u.terms = []; u.uiable = null; resetSudo(s.id); refresh(); };
   const ps = $('#psplit', sec); if (ps) ps.onclick = () => { panes.push({ srv: s.id, tab: 'terminal' }); focusPane = panes.length - 1; renderSide(); renderMain(); };
   const pc = $('#pclose', sec); if (pc) pc.onclick = () => { panes.splice(i, 1); if (!panes.length) panes = [{ srv: null, tab: 'overview' }]; focusPane = Math.max(0, i - 1); renderSide(); renderMain(); };
   sec.querySelectorAll('.tabs button[data-t]').forEach(b => b.onclick = () => { p.tab = b.dataset.t; renderMain(); });
+  const more = $('.tabs [data-more]', sec); if (more) more.onclick = async () => { const rest = tabs.filter(t => !shownTabs.includes(t) || t === p.tab);
+    const t = await pickList('More sections', rest.map(t => UX.TAB_LABEL[t] || t), rest); if (t) { p.tab = t; renderMain(); } };
+  const tl = $('.tabs .seg', sec); if (tl) tl.onkeydown = e => { if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return; const bs = [...tl.querySelectorAll('button')]; const k = bs.indexOf(document.activeElement); if (k < 0) return; e.preventDefault(); bs[(k + (e.key === 'ArrowRight' ? 1 : -1) + bs.length) % bs.length].focus(); };
+  const cmdk = $('.ph-cmdk', sec); if (cmdk) cmdk.onclick = () => UX.palette();
+  const bell = $('.ph-bell', sec); if (bell) { bell.onclick = () => UX.openBell(bell); UX.badge(); }
   uiPill(sec, s, u);
-  ({ overview: vOverview, terminal: vTerminal, files: vFiles, forwards: vForwards, health: vHealth, alerts: vAlerts, history: vHistory, uiable: vUiable })[p.tab](s, u, $('#view', sec), sec);
+  UX.onView(s, p.tab);
+  ({ overview: vOverview, terminal: vTerminal, files: vFiles, containers: CT.view, forwards: vForwards, health: vHealth, alerts: vAlerts, history: vHistory, uiable: vUiable })[p.tab](s, u, $('#view', sec), sec);
 }
-const notConn = s => `<div class="empty"><div><p class="muted">This connection is offline.</p><button class="primary" data-act="connect" data-id="${s.id}">Connect</button></div></div>`;
+const notConn = s => `<div class="empty"><div class="ux-empty"><div class="ux-empty-ico">${UX.icon('server')}</div><h3>${esc(s.name || s.host || 'This connection')} is offline</h3><p class="muted">Connect to open the terminal, files, containers and live stats.</p><div class="ux-empty-acts"><button class="primary" data-act="connect" data-id="${s.id}">Connect</button>${s.mac ? `<button class="ghost" data-act="wake" data-id="${s.id}">⚡ Wake on LAN</button>` : ''}</div></div></div>`;
 
 // ---------- host keys: trust on first use. Backends refuse an unknown/changed key before sending any password or key.
 const hostKeyErr = e => { const m = /HOSTKEY_(UNKNOWN|CHANGED) (SHA256:\S+)/.exec(e && e.message || ''); return m && { changed: m[1] === 'CHANGED', fp: m[2] }; };
@@ -258,12 +316,13 @@ function trustPrompt(s, k) { return new Promise(res => {
   document.body.append(m); focusModal(m); m.querySelector('#c').onclick = () => { m.remove(); res(false); }; m.querySelector('#ok').onclick = () => { m.remove(); res(true); }; }); }
 async function connect(id) {
   const s = servers.find(x => x.id === id); const btns = document.querySelectorAll('#conn'); btns.forEach(b => { b.disabled = true; b.textContent = 'Connecting…'; });
+  resetSudo(id);
   try { try { await uc.call('conn:connect', id); }
     catch (e) { const k = hostKeyErr(e); if (!k) throw e;
       if (!await trustPrompt(s || {}, k)) { refresh(); return; } await call('servers:hostkey', id, k.fp); await uc.call('conn:connect', id); }
     refresh(); // show connected right away; detection + latency fill in async
     uc.call('net:ping', id).then(ms => { S(id).lat = ms; if (anyPane(id)) renderMain(); }).catch(() => {});
-    if (s && isSsh(s)) { S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); if (anyPane(id)) renderMain(); } }
+    if (s && isSsh(s)) { S(id).uiable = await uc.call('uiable:detect', id).catch(() => null); if (anyPane(id)) renderMain(); MD.pollAlerts(s); } }
   catch (e) { toast('Could not connect: ' + e.message, true); refresh(); }
 }
 function uiPill(sec, s, u) {
@@ -276,7 +335,7 @@ function uiPill(sec, s, u) {
       u._uiDetecting = true;
       Promise.resolve(uc.call('uiable:detect', s.id)).then(d => {
         u.uiable = d || { reachable: false }; u._uiDetecting = false;
-        if (anyPane(s.id)) renderMain();
+        if (anyPane(s.id)) renderMain(); MD.pollAlerts(s);
       }).catch(e => {
         console.warn('uiable:detect failed', e);
         u.uiable = { reachable: false }; u._uiDetecting = false;
@@ -289,14 +348,17 @@ function uiPill(sec, s, u) {
   const ui = u.uiable;
   const ver = ui.version ? ' ' + esc(ui.version) : '';
   if (ui.reachable) {
-    p.innerHTML = `<span class="pill ok">● Uiable${ver} on :${ui.port}</span> <button class="primary sm" id="openUi">Open Uiable dashboard</button> <button class="sm" id="openUiB" title="Open in your browser">Browser</button>`;
+    p.innerHTML = `<span class="pill ok">● Uiable${ver} on :${ui.port}</span> <button class="primary sm" id="openUi"${ON_WEB ? ' title="Show the dashboard in the Uiable tab"' : ''}>Open Uiable dashboard</button> <button class="sm" id="openUiB" title="${ON_WEB ? 'Open the dashboard in a new browser tab' : 'Open in your browser'}">${ON_WEB ? 'New tab ↗' : 'Browser'}</button>`;
   } else if (ui.installed || ui.isUiable || ui.filesVersion) {
     p.innerHTML = `<span class="pill warn">Uiable${ver} installed · not running</span>`;
   } else {
     p.innerHTML = `<span class="pill">Uiable not found on this server · SSH features only</span>`;
   }
   p.insertAdjacentHTML('beforeend', ' <span id="uiInst"></span>'); uiInstallButton(s, u, p);
-  if ($('#openUi', p)) { $('#openUi', p).onclick = () => openUi(s.id, 'window'); $('#openUiB', p).onclick = () => openUi(s.id, 'browser'); }
+  if ($('#openUi', p)) {
+    // Web: a new window is just another browser tab, so the main button shows the dashboard in the Uiable tab instead.
+    $('#openUi', p).onclick = () => { if (ON_WEB) { const pn = panes.find(x => x.srv === s.id) || panes[focusPane]; pn.tab = 'uiable'; renderMain(); } else openUi(s.id, 'window'); };
+    $('#openUiB', p).onclick = () => openUi(s.id, 'browser'); }
 }
 async function openUi(id, mode) { const u = S(id); if (u.uiOpening) return null; u.uiOpening = true;
   try {
@@ -318,18 +380,35 @@ async function vUiable(s, u, v) {
     $('#uiRedetect', v).onclick = async () => { u.uiable = null; u._uiDetecting = false; renderMain(); };
     return;
   }
-  v.innerHTML = `<div class="uiable-view">${bar(`
+  // Desktop: <webview> (a top-level guest, so Uiable's X-Frame-Options: DENY can't blank it).
+  // Web/Docker: a normal <iframe> of the Connect server's Uiable proxy port, which relaxes framing to this page only.
+  const btns = ON_WEB ? `
+      <button class="sm" id="uiReload" title="Reload dashboard" aria-label="Reload dashboard">⟳</button>
+      <button class="sm primary" id="uiEmbed" title="Load the dashboard in this tab">Open here</button>
+      <button class="sm" id="uiBrowser" title="Open the dashboard in a new browser tab">New tab ↗</button>` : `
       <button class="sm" id="uiReload" title="Reload dashboard">⟳</button>
       <button class="sm primary" id="uiEmbed" title="Load dashboard in this tab">Open here</button>
       <button class="sm" id="uiDetach" title="Open in a new Connect window">Detach</button>
       <button class="sm" id="uiWeb" title="Open in an in-app browser window">Open in window</button>
-      <button class="sm" id="uiBrowser" title="Open in your default system browser">System browser</button>
-    `)}<div class="uiable-frame-wrap"><div class="uiable-loading muted small" id="uiLoad">Starting tunnel…</div><webview class="uiable-frame hidden" id="uiFrame" title="Uiable dashboard" allowpopups="false" webpreferences="contextIsolation=yes, sandbox=yes, spellcheck=false"></webview></div>
-    <p class="muted small uiable-note">In-tab view uses the same SSH port forward as <b>Open Uiable dashboard</b>. Ports → <b>open</b> still uses your system browser.</p></div>`;
+      <button class="sm" id="uiBrowser" title="Open in your default system browser">System browser</button>`;
+  const frameEl = ON_WEB
+    ? '<iframe class="uiable-frame hidden" id="uiFrame" title="Uiable dashboard" referrerpolicy="same-origin" allow="clipboard-read; clipboard-write"></iframe>'
+    : '<webview class="uiable-frame hidden" id="uiFrame" title="Uiable dashboard" allowpopups="false" webpreferences="contextIsolation=yes, sandbox=yes, spellcheck=false"></webview>';
+  v.innerHTML = `<div class="uiable-view">${bar(btns)}<div class="uiable-frame-wrap"><div class="uiable-loading muted small" id="uiLoad">Starting tunnel…</div>${frameEl}</div>
+    <p class="muted small uiable-note">${ON_WEB ? 'Shown through this Connect server’s SSH tunnel on port <b>' + esc(String((s.forwards || []).find(f => f.id === 'uiable')?.localPort || 8080)) + '</b> (the same one <b>New tab</b> uses). Sign in to Uiable as usual.' : 'In-tab view uses the same SSH port forward as <b>Open Uiable dashboard</b>. Ports → <b>open</b> still uses your system browser.'}</p></div>`;
   const frame = $('#uiFrame', v), loadEl = $('#uiLoad', v);
   // <webview> is a top-level guest (not framed), so Uiable X-Frame-Options: DENY / frame-ancestors 'none' do not blank it.
   const showUrl = (url) => {
     u.uiableUrl = url;
+    if (ON_WEB) { // iframe: 'load' fires for the page (or the browser's error page); no did-fail-load, so time out to a hint
+      clearTimeout(frame._uiT);
+      frame.onload = () => { clearTimeout(frame._uiT); loadEl.classList.add('hidden'); frame.classList.remove('hidden'); };
+      frame._uiT = setTimeout(() => { loadEl.classList.remove('hidden'); loadEl.textContent = 'The dashboard is taking a while to load. If it stays blank, use New tab ↗ (port ' + (url.match(/:(\d+)\//) || [, '?'])[1] + ' must be published by the container).'; }, 15000);
+      loadEl.classList.remove('hidden'); loadEl.textContent = 'Loading dashboard…';
+      if (location.protocol === 'https:' && /^http:/.test(url)) { loadEl.textContent = 'This page is HTTPS but the Uiable tunnel is plain HTTP, so the browser blocks it in-tab. Use New tab ↗.'; return; }
+      if (frame.getAttribute('src') !== url) frame.setAttribute('src', url); else frame.src = url;
+      return;
+    }
     const onFail = (e) => {
       // ignore aborted navigations from reload/src changes
       if (e && (e.errorCode === -3 || e.isMainFrame === false)) return;
@@ -360,8 +439,8 @@ async function vUiable(s, u, v) {
   };
   $('#uiReload', v).onclick = () => { if (u.uiableUrl) showUrl(u.uiableUrl); else embed(); };
   $('#uiEmbed', v).onclick = () => embed();
-  $('#uiDetach', v).onclick = () => openUi(s.id, 'window');
-  $('#uiWeb', v).onclick = () => openUi(s.id, 'window');
+  if ($('#uiDetach', v)) $('#uiDetach', v).onclick = () => openUi(s.id, 'window');
+  if ($('#uiWeb', v)) $('#uiWeb', v).onclick = () => openUi(s.id, 'window');
   $('#uiBrowser', v).onclick = () => openUi(s.id, 'browser');
   await embed();
 }
@@ -512,10 +591,11 @@ function vOverview(s, u, v) {
     });
     const cust = v.querySelector('#metricCust');
     if (cust) cust.onclick = () => customizeMetrics();
+    MD.bindOverview(v, s, u);
   };
   const draw = () => {
     if (u.metricDragging) return;
-    const x = u.stats; if (!x) { v.innerHTML = '<p class="muted">Loading stats…</p>'; return; }
+    const x = u.stats; if (!x) { if (!v.querySelector('.ux-skel-grid')) v.innerHTML = `<div class="row small metric-toolbar"><span class="muted">Loading live stats…</span></div>${UX.skel.cards(6)}`; return; }
     prefs = loadMetricPrefs();
     const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
     const bar = p => `<div class="bar ${p > 90 ? 'crit' : p > 75 ? 'warn' : ''}"><i style="width:${p}%"></i></div>`;
@@ -534,7 +614,7 @@ function vOverview(s, u, v) {
       storage: () => wrapCard('storage', `${sumHead(`<div class="card-title">Storage</div>${(x.disks || []).slice(0, 2).map(d => { const p = pct(d.used, d.size); return `<div class="metric-extra" style="margin-top:8px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted small metric-extra" style="margin-top:6px">No disks reported</p>'}`)}<div class="metric-hist">${(x.disks || []).map(d => { const p = pct(d.used, d.size); return `<div style="margin-bottom:12px"><div class="row small"><span class="mono grow ellipsis">${esc(d.mount)}</span><span class="muted">${fmtB(d.used)} / ${fmtB(d.size)} · ${p}%</span></div>${bar(p)}</div>`; }).join('') || '<p class="muted">No disks reported</p>'}</div>`),
     };
     const gridHtml = prefs.order.filter(k => !prefs.hidden.includes(k)).map(k => (cards[k] && cards[k]()) || '').filter(Boolean).join('');
-    v.innerHTML = `<div class="row small metric-toolbar"><span class="muted">Metrics while this connection has been open · ${esc(since)}</span><span class="spacer"></span><span class="muted">${(u.statsHist || []).length} samples</span><button type="button" class="sm" id="metricCust" title="Reorder, resize, or hide metrics">Customize</button></div>
+    v.innerHTML = `<div class="row small metric-toolbar"><span class="muted">Metrics while this connection has been open · ${esc(since)}</span><span class="spacer"></span><span class="muted">${(u.statsHist || []).length} samples · click a graph for full detail</span><button type="button" class="sm" id="metricCust" title="Reorder, resize, or hide metrics">Customize</button></div>
     <div class="metric-cols">${gridHtml}</div>`;
     bindMetricUi();
   };
@@ -580,8 +660,8 @@ function vTerminal(s, u, v) {
   const MAX_TERM_TABS = 12;
   const TERM_TAB_WARN = 10;
   u.termSplit = !!u.termSplit && !ON_MOBILE;
-  u.termUseSudo = !!u.termUseSudo;
-  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT" title="New tab (Ctrl+T) · max ${MAX_TERM_TABS}">+ Tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button><button class="sm" id="dockT" title="Open a shell inside a running Docker container on the server">◫ Docker</button><label class="row small term-sudo" style="gap:6px;margin:0" title="New tabs open a root shell using the saved sudo password"><input type="checkbox" id="termSudo"> Use sudo</label>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button>${!ON_MOBILE ? '<button class="sm" id="termSplit" title="Show two terminals side by side">⇄ Split</button>' : ''}<span class="spacer"></span><span class="muted small" id="tabHint"></span><button class="sm" id="findB" title="Search in the terminal (Ctrl+F)" aria-label="Search"><svg class="foot-ico" viewBox="0 0 24 24" aria-hidden="true" style="width:1.1em;height:1.1em;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round"><circle cx="11" cy="11" r="6"/><path d="m20 20-3.5-3.5"/></svg></button></div>
+  u.termUseSudo = !!u.termUseSudo; u.termRoot = !!(u.termRoot && u.termUseSudo);
+  v.innerHTML = `<div class="termwrap"><div class="row"><div class="seg" id="ttabs"></div><button class="sm" id="newT" title="New tab (Ctrl+T) · max ${MAX_TERM_TABS}">+ Tab</button>${isSsh(s) ? '<button class="sm" id="tmuxT" title="New tab attached to a tmux session on the server — it keeps running if you disconnect">+ tmux</button><button class="sm" id="dockT" title="Open a shell inside a running Docker container on the server">◫ Docker</button><span class="term-sudo-wrap" id="tsWrap"><label class="row small term-sudo" style="gap:6px;margin:0" title="New tabs open a root shell that keeps your environment (sudo -s), using the saved sudo password. Hover or press ▾ for Use root."><input type="checkbox" id="termSudo"> <span id="tsLbl">Use sudo</span></label><button class="sm ts-more" id="tsMore" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="tsPop" title="More sudo options" aria-label="More sudo options">▾</button><div class="sudo-pop" id="tsPop" role="group" aria-label="Elevation mode"><label class="row small" style="gap:8px;margin:0"><input type="checkbox" id="termRoot"> <span><b>Use root</b><br><span class="muted">Full root login (sudo -i): root’s HOME, PATH and folder</span></span></label></div></span>' : ''}<button class="sm" id="snipB" title="Saved commands">⌘ Scripts</button>${!ON_MOBILE ? '<button class="sm" id="termSplit" title="Show two terminals side by side">⇄ Split</button>' : ''}<span class="spacer"></span><span class="muted small" id="tabHint"></span><button class="sm" id="findB" title="Search in the terminal (Ctrl+F)" aria-label="Search"><svg class="foot-ico" viewBox="0 0 24 24" aria-hidden="true" style="width:1.1em;height:1.1em;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round"><circle cx="11" cy="11" r="6"/><path d="m20 20-3.5-3.5"/></svg></button></div>
     <div class="termhosts ${u.termSplit ? 'split' : ''}" id="ths"><div class="termhost" id="th" data-side="a"></div><div class="termhost ${u.termSplit ? '' : 'hidden'}" id="th2" data-side="b"></div></div>
     <div class="findbar hidden" id="fb"><input id="fbi" placeholder="Find in terminal…"><button class="sm" id="fbp" title="Previous">↑</button><button class="sm" id="fbn" title="Next">↓</button><button class="sm" id="fbx">✕</button></div></div>`;
   const syncAddBtns = () => {
@@ -607,11 +687,11 @@ function vTerminal(s, u, v) {
       const on = t.sid === a || (u.termSplit && t.sid === b);
       const mark = u.termSplit ? (t.sid === a ? '·L ' : t.sid === b ? '·R ' : '') : '';
       const lab = t.label || ('Tab ' + (i + 1));
-      const sudoMark = t.sudo ? ' <span class="pill ok" style="padding:0 5px;font-size:10px">sudo</span>' : '';
-      return `<button class="${on ? 'active' : ''}" data-s="${t.sid}">${mark}${lab}${sudoMark} <span data-x="${t.sid}" style="opacity:.6">✕</span></button>`;
+      const sudoMark = t.sudo ? ` <span class="pill ${t.sudo === 'root' ? 'err' : 'ok'} tmode" style="padding:0 5px;font-size:10px">${t.sudo === 'root' ? 'root' : 'sudo'}</span>` : '';
+      return `<button class="${on ? 'active' : ''}" data-s="${t.sid}" aria-pressed="${on}">${mark}${esc(lab)}${sudoMark} <span data-x="${t.sid}" class="tclose" role="button" aria-label="Close ${esc(lab)}" title="Close (undo for a few seconds)">✕</span></button>`;
     }).join('');
     $('#ttabs').querySelectorAll('button').forEach(btn => btn.onclick = (e) => {
-      if (e.target.dataset.x) { uc.send('shell:close', s.id, e.target.dataset.x); return; }
+      if (e.target.dataset.x) { closeTermUndo(s, u, e.target.dataset.x); return; }
       const sid = btn.dataset.s;
       if (u.termSplit && u.termFocus === 'b') {
         if (sid === u.activeTerm) { /* swap */ u.activeTerm = u.activeTermB; u.activeTermB = sid; }
@@ -681,11 +761,11 @@ function vTerminal(s, u, v) {
     term.onData(d => uc.send('shell:write', s.id, sid, d));
     termClipboard(term, node);
     term.onResize(({ cols, rows }) => uc.send('shell:resize', s.id, sid, cols, rows));
-    const asSudo = !!u.termUseSudo && isSsh(s);
+    const asSudo = !!u.termUseSudo && isSsh(s), mode = asSudo ? (u.termRoot ? 'root' : 'sudo') : null;
     if (asSudo) await ensureSudoForFiles(s.id);
-    u.terms.push({ sid, term, fit, search, node, label: label || (asSudo ? 'sudo' : label), sudo: asSudo });
+    u.terms.push({ sid, term, fit, search, node, label, sudo: mode || false }); // the sudo/root pill marks the mode
     if (u.termSplit && u.termFocus === 'b') u.activeTermB = sid; else u.activeTerm = sid;
-    await call('shell:open', s.id, sid, term.cols, term.rows, asSudo || undefined);
+    await call('shell:open', s.id, sid, term.cols, term.rows, mode === 'root' ? 'root' : asSudo || undefined);
     if (runCmd) uc.send('shell:write', s.id, sid, runCmd.replace(/\r?\n/g, '\r') + '\r');
     show();
   };
@@ -715,16 +795,28 @@ function vTerminal(s, u, v) {
       }
     })();
   }
-  const sudoCb = $('#termSudo', v);
+  // Use sudo (root shell, your environment) / Use root (full root login). Never stored; off after every (re)connect.
+  const sudoCb = $('#termSudo', v), rootCb = $('#termRoot', v), tsWrap = $('#tsWrap', v), tsMore = $('#tsMore', v);
   if (sudoCb) {
-    sudoCb.checked = !!u.termUseSudo;
-    sudoCb.onchange = async () => {
-      u.termUseSudo = !!sudoCb.checked;
-      if (u.termUseSudo) {
-        try { await ensureSudoForFiles(s.id); toast('New tabs will open as root (Use sudo)'); }
-        catch (e) { u.termUseSudo = false; sudoCb.checked = false; toast(e.message || String(e), true); }
-      }
-    };
+    const syncMode = () => { sudoCb.checked = !!u.termUseSudo; rootCb.checked = !!u.termRoot;
+      tsWrap.dataset.mode = u.termRoot ? 'root' : u.termUseSudo ? 'sudo' : '';
+      $('#tsLbl', v).textContent = u.termRoot ? 'Use root' : 'Use sudo'; };
+    const popOpen = on => { tsWrap.classList.toggle('open', on); tsMore.setAttribute('aria-expanded', on ? 'true' : 'false'); };
+    const enable = async root => { try { await ensureSudoForFiles(s.id); u.termUseSudo = true; u.termRoot = !!root;
+        toast(root ? 'New tabs open a full root login (Use root)' : 'New tabs open a root shell with your environment (Use sudo)'); }
+      catch (e) { u.termUseSudo = false; u.termRoot = false; toast(e.message || String(e), true); } syncMode(); };
+    syncMode();
+    sudoCb.onchange = () => { if (sudoCb.checked) enable(false); else { u.termUseSudo = false; u.termRoot = false; syncMode(); } };
+    rootCb.onchange = () => { if (rootCb.checked) enable(true); else { u.termRoot = false; syncMode(); toast(u.termUseSudo ? 'Back to Use sudo (your environment)' : 'Use root off'); } popOpen(false); rootCb.blur(); };
+    tsMore.onclick = e => { e.stopPropagation(); popOpen(!tsWrap.classList.contains('open')); };
+    // touch: long-press the label opens the menu instead of toggling
+    let lp = null; const lbl = tsWrap.querySelector('label.term-sudo');
+    lbl.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') return; lp = setTimeout(() => { lp = 'fired'; popOpen(true); }, 500); });
+    const lpEnd = () => { if (lp && lp !== 'fired') clearTimeout(lp); };
+    lbl.addEventListener('pointerup', lpEnd); lbl.addEventListener('pointercancel', lpEnd); lbl.addEventListener('pointerleave', lpEnd);
+    lbl.addEventListener('click', e => { if (lp === 'fired') { e.preventDefault(); lp = null; } }, true);
+    tsWrap.addEventListener('keydown', e => { if (e.key === 'Escape') { popOpen(false); tsMore.focus(); } });
+    document.addEventListener('pointerdown', function off(e) { if (!document.body.contains(tsWrap)) return document.removeEventListener('pointerdown', off); if (!tsWrap.contains(e.target)) popOpen(false); });
   }
   const tm = $('#tmuxT', v); if (tm) tm.onclick = () => newT('tmux new-session -A -s uiable || tmux new-session -s uiable', 'tmux');
   const dk = $('#dockT', v); if (dk) dk.onclick = async () => {
@@ -749,16 +841,30 @@ function vTerminal(s, u, v) {
     $('#ths', v).classList.toggle('split', !!u.termSplit);
     show();
   };
-  if (!u.terms.length) newT(); else show();
+  if (u.pendingNewT) { const x = u.pendingNewT; delete u.pendingNewT; newT(x.cmd, x.label); }
+  else if (!u.terms.length) newT(); else show();
+}
+// Closing a terminal tab is undoable: the shell keeps running (output still lands in it) until the toast expires.
+function closeTermUndo(s, u, sid) {
+  const i = u.terms.findIndex(t => t.sid === sid); if (i < 0) return;
+  const t = u.terms[i], lab = t.label || ('Tab ' + (i + 1));
+  const redraw = () => { if (anyPane(s.id, 'terminal')) u.redrawTerms?.(); };
+  UX.undoable({ msg: `Closed ${lab}`, srv: s.id, tab: 'terminal', ms: 6000,
+    apply: () => { u.terms.splice(i, 1); (u.closing ||= []).push(t); t.node.style.display = 'none';
+      if (u.activeTerm === sid) u.activeTerm = u.terms[Math.min(i, u.terms.length - 1)]?.sid;
+      if (u.activeTermB === sid) u.activeTermB = u.terms.find(x => x.sid !== u.activeTerm)?.sid || u.activeTerm; redraw(); },
+    commit: () => { u.closing = (u.closing || []).filter(x => x !== t); try { t.term.dispose(); t.node.remove(); } catch {} uc.send('shell:close', s.id, sid); },
+    revert: () => { u.closing = (u.closing || []).filter(x => x !== t); if (!servers.find(x => x.id === s.id)?.connected) return toast('That connection has closed', true);
+      u.terms.splice(Math.min(i, u.terms.length), 0, t); u.activeTerm = sid; anyPane(s.id, 'terminal') ? redraw() : openSrvTab(s, 'terminal'); } });
 }
 uc.on(d => {
   const u = S(d.id);
-  if (d.ev === 'shell-data') u.terms.find(t => t.sid === d.sid)?.term.write(d.data);
+  if (d.ev === 'shell-data') (u.terms.find(t => t.sid === d.sid) || (u.closing || []).find(t => t.sid === d.sid))?.term.write(d.data);
   else if (d.ev === 'shell-exit') { const i = u.terms.findIndex(t => t.sid === d.sid); if (i >= 0) { u.terms[i].term.dispose(); u.terms[i].node.remove(); u.terms.splice(i, 1); }
     if (u.activeTerm === d.sid) u.activeTerm = u.terms.find(t => t.sid !== u.activeTermB)?.sid || u.terms[0]?.sid;
     if (u.activeTermB === d.sid) u.activeTermB = u.terms.find(t => t.sid !== u.activeTerm)?.sid || u.terms[0]?.sid;
     if (anyPane(d.id, 'terminal')) u.redrawTerms?.(); }
-  else if (d.ev === 'closed') { const s = servers.find(x => x.id === d.id); const r = s && rulesFor(s).find(x => x.metric === 'disconnect');
+  else if (d.ev === 'closed') { resetSudo(d.id); const s = servers.find(x => x.id === d.id); const r = s && rulesFor(s).find(x => x.metric === 'disconnect');
     if (s && !u.userClosed && r?.enabled) raiseAlert(s, 'Disconnected unexpectedly'); else toast('Connection closed', !u.userClosed); u.userClosed = false; u.terms = []; u.statsHist = []; u.statsSince = null; u.stats = null;
     if (s && s.quick) uc.call('servers:purgetemp', d.id).catch(() => {});
     refresh(); }
@@ -815,7 +921,7 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
   }
   if (!isLocal && paths.length) {
     items.push(['Delete', async () => {
-      if (!confirm(`Delete ${paths.length} item(s)? Folders are deleted with everything inside.`)) return;
+      if (!await confirmDeleteFiles(paths)) return;
       try {
         if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId);
         for (const q of paths) await quietCall('fs:remove', srvId, q, F.useSudo || undefined);
@@ -835,6 +941,8 @@ function fileMenu(x, y, srvId, F, f, p, isLocal, load) {
   items.push(['Refresh', () => load()]);
   ctxMenu(x, y, items.filter(x => x != null));
 }
+const confirmDeleteFiles = paths => UX.confirm({ title: `Delete ${paths.length === 1 ? '“' + paths[0].split('/').pop() + '”' : paths.length + ' items'}?`, danger: true, ok: 'Delete permanently', typed: 'delete',
+  body: `<p>Folders are deleted with everything inside. There is no recycle bin on the server.</p><ul class="mono small del-list">${paths.slice(0, 6).map(p => `<li>${esc(p)}</li>`).join('')}${paths.length > 6 ? `<li class="muted">…and ${paths.length - 6} more</li>` : ''}</ul>` });
 function bindLongPress(node, fn) {
   let lp = null;
   node.addEventListener('touchstart', e => { const t = e.touches[0]; lp = setTimeout(() => fn(t.clientX, t.clientY), 550); }, { passive: true });
@@ -851,15 +959,20 @@ function fpane(srvId, F, onOther) {
   let items = [];
   const q = r => node.querySelector(`[data-r="${r}"]`);
   const load = async () => {
-    if (!F.cwd) F.cwd = isLocal ? await uc.call('lfs:home') : await call('fs:home', srvId);
+    if (!items.length) q('fl').innerHTML = UX.skel.rows(7, 3);
     try {
+      if (!F.cwd) F.cwd = isLocal ? await uc.call('lfs:home') : await uc.call('fs:home', srvId);
       if (!isLocal && F.useSudo) await ensureSudoForFiles(srvId);
       items = isLocal ? await uc.call('lfs:list', F.cwd) : await uc.call('fs:list', srvId, F.cwd, F.useSudo || undefined);
-    } catch (e) { toast(e.message, true); items = []; }
+    } catch (e) { toast(e.message, true); items = []; F.err = e.message; F.cwd ||= '/'; }
     F.sel.clear(); const parts = F.cwd.split('/').filter(Boolean);
     q('crumbs').innerHTML = `<a data-p="/">/</a>` + parts.map((p, i) => `<a data-p="/${parts.slice(0, i + 1).join('/')}">${esc(p)}</a><span class="muted">/</span>`).join('');
     q('crumbs').querySelectorAll('a').forEach(a => a.onclick = () => { F.cwd = a.dataset.p; load(); });
-    q('fl').innerHTML = items.map((f, i) => `<tr data-i="${i}" draggable="true"><td>${f.dir ? '📁' : f.link ? '🔗' : '📄'} ${esc(f.name)}</td><td class="right muted">${f.dir ? '' : fmtB(f.size)}</td><td class="muted small">${new Date(f.mtime).toLocaleString('en-GB')}</td></tr>`).join('') || '<tr><td colspan=3 class="muted">Empty folder</td></tr>';
+    q('fl').innerHTML = items.map((f, i) => `<tr data-i="${i}" draggable="true"><td>${f.dir ? '📁' : f.link ? '🔗' : '📄'} ${esc(f.name)}</td><td class="right muted">${f.dir ? '' : fmtB(f.size)}</td><td class="muted small">${new Date(f.mtime).toLocaleString('en-GB')}</td></tr>`).join('') || '<tr class="fempty"><td colspan=3></td></tr>';
+    const fe = q('fl').querySelector('.fempty td');
+    if (fe) { const err = F.err; F.err = null; fe.append(UX.empty({ compact: true, ico: 'files', title: err ? 'Can\'t open this folder' : 'This folder is empty', text: err ? esc(err) : isLocal ? 'Drop files from the other pane to copy them here.' : 'Drop files here to upload, or create something new.', actions: isLocal ? [{ label: 'Up one folder', run: () => { F.cwd = pdir(F.cwd); load(); } }] : [
+      err && !F.useSudo ? { label: 'Use sudo', primary: true, run: () => { F.useSudo = true; const cb = q('sudo'); if (cb) cb.checked = true; load(); } } : { label: 'New file', primary: true, ico: 'plus', run: () => newFile(srvId, F, load) },
+      { label: 'New folder', run: () => newFolder(srvId, F, load) }, { label: 'Up one folder', run: () => { F.cwd = pdir(F.cwd); load(); } }] })); }
     q('fl').querySelectorAll('tr[data-i]').forEach(r => {
       const f = items[r.dataset.i], p = pjoin(F.cwd, f.name);
       r.onclick = e => { if (!e.ctrlKey && !e.shiftKey) { F.sel.clear(); q('fl').querySelectorAll('tr').forEach(x => x.classList.remove('sel')); } F.sel.has(p) ? F.sel.delete(p) : F.sel.add(p); r.classList.toggle('sel', F.sel.has(p)); };
@@ -881,8 +994,8 @@ function fpane(srvId, F, onOther) {
   q('rn').onclick = async () => { const [p] = F.sel; if (!p) return toast('Select something first', true); const n = await prompt2('Rename to', p.split('/').pop()); if (n) { if (F.useSudo) await ensureSudoForFiles(srvId); await call('fs:rename', srvId, p, pjoin(pdir(p), n), F.useSudo || undefined); load(); } };
   q('rm').onclick = async () => {
     if (!F.sel.size) return toast('Select something first', true);
-    if (!confirm(`Delete ${F.sel.size} item(s)? Folders are deleted with everything inside.`)) return;
     const paths = [...F.sel];
+    if (!await confirmDeleteFiles(paths)) return;
     try {
       if (F.useSudo && !isLocal) await ensureSudoForFiles(srvId);
       for (const p of paths) await quietCall('fs:remove', srvId, p, F.useSudo || undefined);
@@ -945,11 +1058,11 @@ async function vFiles(s, u, v) {
 }
 // ---------- global shortcuts: Ctrl+T/W/1-9/F for terminals in the focused pane
 document.addEventListener('keydown', e => {
-  if (!e.ctrlKey || e.target.closest('input,textarea,select')) return;
+  if (!e.ctrlKey || e.target.closest('input,textarea,select,[contenteditable="true"],.xterm')) return;
   const p = panes[focusPane]; if (!p || p.tab !== 'terminal') { if (e.key === 'f' || e.key === 'F') { if (p && p.tab === 'terminal') { e.preventDefault(); } } return; }
   const u = S(p.srv); const k = e.key.toLowerCase();
   if (k === 't') { e.preventDefault(); u.newT && u.newT(); }
-  else if (k === 'w') { e.preventDefault(); if (u.activeTerm) uc.send('shell:close', p.srv, u.activeTerm); }
+  else if (k === 'w') { e.preventDefault(); const s = servers.find(x => x.id === p.srv); if (u.activeTerm && s) closeTermUndo(s, u, u.activeTerm); }
   else if (k === 'f') { e.preventDefault(); u.search && u.search.open(); }
   else if (/^[1-9]$/.test(e.key)) { const i = +e.key - 1; if (u.terms[i]) { e.preventDefault(); u.activeTerm = u.terms[i].sid; u.redrawTerms && u.redrawTerms(); } }
 });
@@ -1006,9 +1119,10 @@ function vForwards(s, u, v) {
       <td style="width:min(130px,100%)"><input data-k="localHost" value="${esc(f.localHost || '127.0.0.1')}" ${remote ? '' : 'disabled'} title="PC-side target (Server listens only)"></td><td style="width:min(100px,100%)"><input data-k="localPort" type="number" value="${f.localPort}"></td>
       <td><input type="checkbox" data-k="auto" ${f.auto ? 'checked' : ''} title="Start when connecting"></td>
       <td>${a.active ? `<span class="pill ok">● On${a.conns ? ' · ' + a.conns : ''}</span>` : '<span class="pill">Off</span>'}</td>
-      <td class="nowrap right">${a.active ? `${!remote ? `<a href="#" data-open="${f.localPort}">open</a>` : ''} <button class="sm" data-stop="${f.id}">Stop</button>` : `<button class="sm primary" data-start="${i}" ${s.connected ? '' : 'disabled'}>Start</button>`} ${f.builtin ? '' : `<button class="sm danger" data-del="${i}">✕</button>`}</td></tr>`; }).join('')}
+      <td class="nowrap right">${a.active ? `${!remote ? `<a href="#" data-open="${f.localPort}">open</a>` : ''} <button class="sm" data-stop="${f.id}">Stop</button>` : `<button class="sm primary" data-start="${i}" ${s.connected ? '' : 'disabled'}>Start</button>`} ${f.builtin ? '' : `<button class="sm danger" data-del="${i}" aria-label="Remove forward ${esc(f.name)}" title="Remove (undo for a few seconds)">✕</button>`}</td></tr>`; }).join('') || `<tr><td colspan="9" class="fw-empty"></td></tr>`}
     </tbody></table><div class="row" style="margin-top:12px"><button class="sm" id="addF">+ Add forward</button><span class="spacer"></span><span class="muted small">Edits save automatically · remote listens need AllowTcpForwarding in sshd_config</span></div></div>`;
   const persist = async () => { await call('servers:forwards', s.id, fw); };
+  const fe = v.querySelector('.fw-empty'); if (fe) fe.append(UX.empty({ compact: true, ico: 'xfer', title: 'No port forwards yet', text: 'Reach a service on the server (a database, a web app) at localhost on this PC — or publish a PC port on the server.', actions: [{ label: 'Add forward', primary: true, ico: 'plus', run: () => $('#addF', v).click() }] }));
   v.querySelectorAll('[data-k]').forEach(inp => inp.onchange = () => { const f = fw[inp.closest('tr').dataset.i]; f[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value;
     if (inp.dataset.k === 'dir') { inp.closest('tr').querySelector('[data-k="localHost"]').disabled = f.dir !== 'remote'; }
     persist(); });
@@ -1016,13 +1130,19 @@ function vForwards(s, u, v) {
     if (f.dir !== 'remote') { const c = await uc.call('fwd:check', f.localPort); if (!c.free) return toast(`Port ${f.localPort} is already in use on this PC, pick another PC port`, true); }
     await call('fwd:start', s.id, f); refresh(); });
   v.querySelectorAll('[data-stop]').forEach(b => b.onclick = async () => { await call('fwd:stop', s.id, b.dataset.stop); refresh(); });
-  v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { const f = fw[b.dataset.del]; if (s.connected) await uc.call('fwd:stop', s.id, f.id).catch(() => {}); fw.splice(b.dataset.del, 1); await persist(); refresh(); });
+  v.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { const k = +b.dataset.del, f = fw[k], tr = b.closest('tr');
+    UX.undoable({ msg: `Removed forward ${f.name || f.localPort}`, srv: s.id, tab: 'forwards',
+      apply: () => { tr.classList.add('row-gone'); tr.setAttribute('aria-hidden', 'true'); tr.querySelectorAll('button, input, select, a').forEach(x => x.tabIndex = -1); },
+      commit: async () => { if (s.connected) await uc.call('fwd:stop', s.id, f.id).catch(() => {}); const j = fw.indexOf(f); if (j >= 0) fw.splice(j, 1); await persist(); refresh(); },
+      revert: () => { tr.classList.remove('row-gone'); tr.removeAttribute('aria-hidden'); tr.querySelectorAll('button, input, select, a').forEach(x => x.removeAttribute('tabindex')); } }); });
   v.querySelectorAll('[data-open]').forEach(a => a.onclick = e => { e.preventDefault(); if (a._busy) return; a._busy = true; setTimeout(() => a._busy = false, 1200); window.open('http://localhost:' + a.dataset.open + '/'); });
   $('#addF').onclick = async () => { // pick the lowest free port — in Docker, from the published pool so it just works
     let lp = (APP.fwdPorts || []).find(p => !fw.some(f => +f.localPort === p)); if (!lp) { lp = 3000; while (fw.some(f => +f.localPort === lp)) lp++; }
     fw.push({ id: 'f' + Date.now(), name: 'New forward', remoteHost: '127.0.0.1', remotePort: lp, localPort: lp, auto: false }); await persist(); refresh(); };
 }
-const fmtPorts = ps => ps.length > 8 ? `${ps[0]}–${ps[ps.length - 1]} (+${ps.length - 2} more)` : ps.join(', ');
+// [8000..8099, 9000] -> "8000–8099, 9000" (contiguous runs collapsed; long lists trimmed)
+const fmtPorts = ps => { const r = []; for (let i = 0; i < ps.length;) { let j = i; while (j + 1 < ps.length && ps[j + 1] === ps[j] + 1) j++; r.push(i === j ? `${ps[i]}` : `${ps[i]}–${ps[j]}`); i = j + 1; }
+  return !r.length ? 'none' : r.length > 4 ? `${r.slice(0, 4).join(', ')} (+${r.length - 4} more)` : r.join(', '); };
 
 // ---------- History: local audit log. Events only — never keystrokes, file contents or secrets.
 async function vHistory(s, u, v) {
@@ -1031,10 +1151,10 @@ async function vHistory(s, u, v) {
   v.innerHTML = `<div class="card"><div class="row" style="margin-bottom:10px"><div class="card-title grow">Activity log <span class="muted">· connections, forwards, file ops and commands — never passwords, keys or terminal data</span></div>
     <label class="row small" style="gap:6px"><input type="checkbox" id="hOn" ${on ? 'checked' : ''}> Record activity</label><button class="sm danger" id="hClr">Clear</button></div>
     <div class="scroll"><table class="list"><thead><tr><th>Time</th><th>Server</th><th>Event</th><th>Detail</th></tr></thead><tbody>
-    ${events.map(e => `<tr class="${e.s === s.id ? 'hcur' : ''}"><td class="muted small nowrap">${new Date(e.t).toLocaleString('en-GB')}</td><td>${esc(e.n || '—')}</td><td><span class="pill small">${esc(e.ev)}</span></td><td class="mono small" style="overflow-wrap:anywhere">${esc(e.d || '')}</td></tr>`).join('') || '<tr><td colspan=4 class="muted">Nothing recorded yet</td></tr>'}
+    ${events.map(e => `<tr class="${e.s === s.id ? 'hcur' : ''}"><td class="muted small nowrap">${new Date(e.t).toLocaleString('en-GB')}</td><td>${esc(e.n || '—')}</td><td><span class="pill small">${esc(e.ev)}</span></td><td class="mono small" style="overflow-wrap:anywhere">${esc(e.d || '')}</td></tr>`).join('') || `<tr><td colspan=4>${on ? '<div class="ux-empty compact"><h3>Nothing recorded yet</h3><p class="muted">Connections, forwards and file operations will appear here.</p></div>' : '<div class="ux-empty compact"><h3>Recording is off</h3><p class="muted">Tick “Record activity” to keep a local log of connections, forwards and file operations.</p></div>'}</td></tr>`}
     </tbody></table></div></div>`;
   $('#hOn', v).onchange = e => uc.call('history:set', e.target.checked).catch(() => {});
-  $('#hClr', v).onclick = async () => { if (!confirm('Delete the whole activity log?')) return; await call('history:clear'); vHistory(s, u, v); };
+  $('#hClr', v).onclick = async () => { if (!await UX.confirm({ title: 'Clear the activity log?', danger: true, ok: 'Clear log', typed: 'clear', body: `<p>Deletes all ${events.length} recorded event${events.length === 1 ? '' : 's'} for every connection on this device.</p>` })) return; await call('history:clear'); vHistory(s, u, v); };
 }
 
 // ---------- Add / edit server
@@ -1140,7 +1260,7 @@ function editServer(s = {}) {
     if ((ctype === 'telnet' || ctype === 'raw') && !v.host) return toast('Host is required', true);
     if (ctype === 'serial' && !v.serialPath) return toast('Pick a serial port', true);
     if (!v.name) v.name = ctype === 'serial' ? v.serialPath : v.host; panes[focusPane].srv = await call('servers:save', v); m.remove(); refresh(); };
-  if (s.id) m.querySelector('#del').onclick = async () => { if (!confirm(`Delete ${s.name}?`)) return; S(s.id).userClosed = true; await call('servers:delete', s.id); delete st[s.id]; panes.forEach(p => { if (p.srv === s.id) p.srv = null; }); m.remove(); refresh(); };
+  if (s.id) m.querySelector('#del').onclick = async () => { if (!await confirmDeleteServer(s)) return; S(s.id).userClosed = true; await call('servers:delete', s.id); delete st[s.id]; panes.forEach(p => { if (p.srv === s.id) p.srv = null; }); m.remove(); refresh(); };
 }
 // ---------- quick connect (one-off, never saved) + app settings
 function quickDialog() {
@@ -1168,11 +1288,12 @@ function settingsDialog() {
   const curT = localStorage.getItem('uc.ttheme') || 'dark';
   const curA = localStorage.getItem(THEME_KEY) || 'dark';
   const themes = [['dark', 'Dark'], ['light', 'Light'], ['solarized', 'Solarized'], ['dracula', 'Dracula'], ['monokai', 'Monokai'], ['system', 'System']];
-  const m = el(`<div class="modal-bg"><div class="modal" style="width:min(400px,100%)"><header><h3>Settings</h3></header><div class="body">
+  const m = el(`<div class="modal-bg"><div class="modal" style="width:min(460px,100%)"><header><h3>Settings</h3></header><div class="body">
     <label class="field"><span>App theme</span><select id="th">${themes.map(([v, l]) => `<option value="${v}" ${v === curA ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     <label class="field"><span>Terminal theme</span><select id="tt">${Object.keys(TERM_THEMES).map(t => `<option value="${t}" ${t === curT ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></label>
     <p class="muted small">App theme colours the whole UI (including Solarized, Dracula and Monokai). Picking an app theme also matches the terminal; you can still override the terminal below. Both save on this device.</p></div>
     <footer><span class="spacer"></span><button class="primary" id="o">Done</button></footer></div></div>`);
+  UX.settingsExtras(m);
   document.body.append(m); focusModal(m);
   m.querySelector('#th').onchange = e => {
     applyTheme(e.target.value);
@@ -1190,7 +1311,10 @@ $('#addSrv').onclick = () => editServer();
 $('#quickB').onclick = () => quickDialog();
 $('#setB').onclick = () => settingsDialog();
 $('#bakB').onclick = () => backupDialog();
-document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } });
+$('#bellB').onclick = () => UX.openBell($('#bellB'));
+$('#cmdkB').onclick = () => UX.palette();
+$('#cmdkB kbd').textContent = UX.MOD + ' K';
+document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; if (b.dataset.act === 'add') editServer(); if (b.dataset.act === 'connect') { b.disabled = true; b.textContent = 'Connecting…'; connect(b.dataset.id); } if (b.dataset.act === 'wake') call('net:wol', b.dataset.id).then(() => toast('Wake packet sent — give it a moment, then connect')); });
 // Docker without host networking: tell the user forwards are limited to the published pool,
 // with the exact commands to unlock any port or publish more. Re-checks every 30 s so it
 // appears/disappears live when the mode changes (container recreated on/off host network).
@@ -1202,9 +1326,9 @@ async function hnPoll() {
 function hnShow() {
   if ($('#hnBar')) return;
   const b = el(`<div id="hnBar"><span>⛁ Docker mode — forwards can only use PC ports <b>${fmtPorts(APP.fwdPorts || [])}</b>. <a href="#" id="hnMore">Use any port</a></span><button class="sm" id="hnR" title="Re-check host networking">⟳</button><button class="sm" id="hnX" title="Dismiss">✕</button></div>`);
-  document.body.append(b);
-  b.querySelector('#hnX').onclick = () => b.remove();
-  b.querySelector('#hnR').onclick = hnPoll;
+  $('#main').prepend(b); // in the page flow above the panes, so it never covers the tab bar or header buttons
+  b.querySelector('#hnX').onclick = () => { localStorage.setItem('uc.hn.dismiss', '1'); b.remove(); };
+  b.querySelector('#hnR').onclick = async () => { await hnPoll(); toast(APP.hostNet ? 'Host networking is on — forwards can use any PC port' : `Still using published ports (${fmtPorts(APP.fwdPorts || [])})`); };
   b.querySelector('#hnMore').onclick = e => { e.preventDefault(); hnDialog(); };
 }
 function hnHide() { $('#hnBar')?.remove(); }
@@ -1257,6 +1381,7 @@ environment:
     try { renderSide(); renderMain(); } catch (_) {}
   }
   hideBoot();
+  try { UX.renderChecklist(); setTimeout(() => { if (!document.querySelector('.modal-bg')) UX.tour(false); }, 900); } catch (e) { console.error(e); }
   if (APP && APP.platform === 'web') { if (!APP.hostNet && localStorage.getItem('uc.hn.dismiss') !== '1') hnShow(); setInterval(hnPoll, 30000); }
 })();
 
@@ -1279,7 +1404,8 @@ environment:
     const curN = String(cur || '').replace(/^v/i, '').split(/[+-]/)[0];
     if (!latest || sameVer(latest, curN) || !newer(latest, curN) || localStorage.getItem(K + '.dismissed') === latest) return;
     c.latest = latest;
-    const b = el(`<div id="updBar"><span>Uiable Connect ${esc(c.latest)} is available</span><button class="sm primary" id="updGo">Update</button><button class="sm" id="updX" title="Dismiss">✕</button></div>`);
+    UX.notify({ kind: 'update', title: `Uiable Connect ${c.latest} is available`, detail: `You have ${curN}. Click to update.`, link: 'update', key: 'update:' + c.latest });
+    const b = el(`<div id="updBar" role="status"><span>Uiable Connect ${esc(c.latest)} is available</span><button class="sm primary" id="updGo">Update</button><button class="sm" id="updX" title="Dismiss">✕</button></div>`);
     document.body.append(b);
     b.querySelector('#updGo').onclick = async () => { b.querySelector('#updGo').disabled = true; b.querySelector('#updGo').textContent = 'Working…';
       try { const r = await uc.call('app:selfupdate');

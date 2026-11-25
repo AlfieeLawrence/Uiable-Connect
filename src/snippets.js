@@ -34,7 +34,9 @@ async function snippetsDialog(s, u) {
       <footer>${n ? '' : '<button class="danger" id="sdel">Delete</button>'}<span class="spacer"></span><button id="c">Cancel</button><button class="primary" id="ss">Save</button></footer></div></div>`);
     document.body.append(e); e.querySelector('#c').onclick = () => e.remove();
     e.querySelector('#ss').onclick = async () => { const name = e.querySelector('#sn').value.trim(), cmd = e.querySelector('#sc').value.trim(); if (!name || !cmd) return toast('Name and command are required', true);
-      Object.assign(x, { name, cmd, serverId: e.querySelector('#sg').checked ? null : (x.serverId || s.id), sudo: e.querySelector('#sd').checked }); if (n) all.push(x); await persist(); e.remove(); draw(); };
-    if (!n) e.querySelector('#sdel').onclick = async () => { if (!confirm(`Delete script "${x.name}"?`)) return; all = all.filter(y => y !== x); await persist(); e.remove(); draw(); }; };
+      Object.assign(x, { name, cmd, serverId: e.querySelector('#sg').checked ? null : (x.serverId || s.id), sudo: e.querySelector('#sd').checked }); if (n) all.push(x); await persist(); UX.invalidateSnippets(); e.remove(); draw(); };
+    if (!n) e.querySelector('#sdel').onclick = () => { const k = all.indexOf(x); e.remove(); // safe: undo puts it back
+      UX.undoable({ msg: `Deleted script “${x.name}”`, srv: s.id, apply: () => { all = all.filter(y => y !== x); draw(); }, commit: async () => { await persist(); UX.invalidateSnippets(); },
+        revert: () => { all.splice(Math.max(0, k), 0, x); if (m.isConnected) draw(); } }); }; };
   m.querySelector('#sAdd').onclick = () => edit(null); draw();
 }

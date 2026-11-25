@@ -772,3 +772,58 @@ body.mobile .ed-gut, body.mobile .ed-ta { font-size: 16px !important; }
 .split-menu button { display: block; width: 100%; text-align: left; background: transparent; border: 0; color: inherit; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
 .split-menu button:hover { background: var(--hover, rgba(255,255,255,.06)); }
 .fhead2 label.row { align-items: center; white-space: nowrap; }
+
+/* =========================================================
+   Web / Docker build fixes (also harmless in the desktop app)
+   ========================================================= */
+/* Tab capsules hug their buttons: no empty "ghost tab" space when the Uiable tab is hidden */
+.tabs .seg { flex: 0 1 auto; }
+#ttabs { flex: 0 1 auto; }
+#ttabs:empty { display: none; }
+/* Docker-mode notice sits in the page flow above the panes instead of floating over the tab bar */
+#hnBar {
+  position: static; transform: none; left: auto; top: auto; z-index: auto;
+  align-self: stretch; max-width: none; flex-shrink: 0; flex-wrap: wrap;
+  border-radius: 12px; box-shadow: none; padding: 6px 8px 6px 14px;
+}
+#hnBar { flex-wrap: nowrap; }
+#hnBar > span { flex: 1 1 0; min-width: 0; }
+#hnBar button { flex-shrink: 0; }
+/* drawer burger for narrow browser windows (desktop/web UI only; the phone app has its own) */
+.wburger { display: none; }
+@media (min-width: 761px) {
+  body:not(.mobile) .pane-head.empty-head { display: none; }
+}
+@media (max-width: 760px) {
+  .wburger { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  body:not(.mobile) .pane-head.empty-head { display: flex; }
+  #hnBar { border-radius: 12px; justify-content: flex-start; font-size: 12px; }
+}
+/* terminal toolbar on tablet/phone: the tab strip gets its own row, buttons line up on the next */
+@media (max-width: 1100px) {
+  #ttabs { flex: 1 1 100%; max-width: 100%; }
+}
+/* Uiable tab: toolbar buttons stay on one line where they fit */
+.uiable-bar button { flex-shrink: 0; white-space: nowrap; }
+/* tablet: all feature tabs (incl. Uiable) fit without a clipped, scrolled-off last tab */
+@media (max-width: 1100px) and (min-width: 761px) {
+  .tabs .seg button { padding: 7px 9px; }
+}
+
+/* Terminal "Use sudo" + hover/tap/focus "Use root" menu; the active mode is colour-coded */
+.term-sudo-wrap { position: relative; display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0;
+  padding: 2px 2px 2px 8px; border-radius: 999px; border: 1px solid transparent; }
+.term-sudo-wrap .ts-more { padding: 2px 6px; min-height: 24px; min-width: 24px; font-size: 11px; line-height: 1; background: transparent; border-color: transparent; }
+.term-sudo-wrap[data-mode="sudo"] { border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.term-sudo-wrap[data-mode="sudo"] #tsLbl { color: var(--ok); font-weight: 600; }
+.term-sudo-wrap[data-mode="root"] { border-color: color-mix(in srgb, var(--danger) 60%, transparent); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.term-sudo-wrap[data-mode="root"] #tsLbl { color: var(--danger); font-weight: 650; }
+.sudo-pop { display: none; position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; width: max-content; max-width: min(300px, 86vw);
+  padding: 10px 12px; background: var(--card-solid); border: 1px solid var(--border2); border-radius: 12px; box-shadow: var(--shadow); line-height: 1.35; }
+.sudo-pop::before { content: ''; position: absolute; left: 0; right: 0; top: -6px; height: 6px; } /* hover bridge */
+.term-sudo-wrap:hover .sudo-pop, .term-sudo-wrap:focus-within .sudo-pop, .term-sudo-wrap.open .sudo-pop { display: block; }
+.sudo-pop input { margin-top: 2px; align-self: flex-start; }
+@media (max-width: 760px) { .sudo-pop { left: auto; right: 0; } }
+/* sudo/root mode pill stays readable inside the active (accent) tab */
+#ttabs button.active .tmode { background: rgba(0,0,0,.45); border-color: transparent; }
+#ttabs .tmode.err { font-weight: 700; }

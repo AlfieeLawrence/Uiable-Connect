@@ -188,6 +188,33 @@ async function uiInstallRun(s, u) {
   return uiInstallProgress(s, u, i, L, update, needPw, opts);
 }
 
+// Fresh installs need two separate confirmations before anything runs on the server (every entry point ends up
+// in the Install button below). Step 1 explains what gets installed; step 2 is a typed check (server name or
+// INSTALL) with a red Install button and Cancel focused. Esc / click outside cancels either step. `dlg` is
+// UX.confirm (injected so tests can drive it); a missing dialog means "not confirmed".
+async function uiInstallDoubleConfirm(s, L, opts, dlg) {
+  if (typeof dlg !== 'function') return false;
+  const e = typeof esc === 'function' ? esc : x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const name = String((s && (s.name || s.host)) || '').trim();
+  const where = `${e(opts.bind)}:${e(String(opts.port))}`;
+  const one = await dlg({
+    title: `Install Uiable ${(L && L.version) || ''} on ${name || 'this server'}?`.replace(/\s+/g, ' '),
+    body: `<p>This installs Uiable as a <b>privileged Docker container with full access to the host</b> (host PID namespace and the host filesystem mounted inside it), so it can manage the server.</p>
+      <ul class="small"><li>It will listen on <span class="mono">${where}</span>${opts.bind === '0.0.0.0' ? ' — <b>reachable from your network</b>' : ' (localhost only; Connect opens it through the SSH tunnel)'}.</li>
+      <li>It downloads the Uiable release from GitHub and pulls / builds the Docker image on the server (Docker itself is installed first if it is missing).</li>
+      <li>It runs as root on the server.</li></ul>`,
+    ok: 'Continue', cancel: 'Cancel', cls: 'ui-inst-step1',
+  });
+  if (one !== true) return false;
+  const words = [...new Set([name, 'INSTALL'].filter(Boolean))];
+  const two = await dlg({
+    title: 'Confirm: install Uiable with host access',
+    body: `<p class="err"><b>Second confirmation.</b> Uiable will get root-level control of <span class="mono">${e(name || 'this server')}</span> through a privileged container on port <span class="mono">${e(String(opts.port))}</span>.</p>`,
+    typed: words, typedNote: 'Nothing runs on the server until you press Install.', ok: 'Install', cancel: 'Cancel', danger: true, focusCancel: true, cls: 'ui-inst-step2',
+  });
+  return two === true;
+}
+
 async function uiInstallProgress(s, u, i, L, update, needPw, opts) {
   const m = el(`<div class="modal-bg"><div class="modal" style="width:720px"><header><h3 class="grow">${update ? `Update Uiable ${esc(i.cur)} → ${esc(L.version)}` : `Install Uiable ${esc(L.version)}`}</h3></header><div class="body">
     <p>This downloads <span class="mono">${esc(L.url.split('/').pop())}</span> from the Uiable GitHub release onto the server, unpacks it into <span class="mono">${UI_DIR}</span> and runs Uiable's own <span class="mono">install.sh</span> (<span class="mono">docker compose up -d --build</span>).</p>
@@ -198,9 +225,10 @@ async function uiInstallProgress(s, u, i, L, update, needPw, opts) {
     <pre class="mono small uilog hidden"></pre></div>
     <footer><span class="muted small" id="uist"></span><span class="spacer"></span><button id="c">Close</button><button class="primary" id="go">${update ? 'Update' : 'Install'}</button></footer></div></div>`);
   document.body.append(m); if (typeof focusModal === 'function') focusModal(m); const log = m.querySelector('.uilog'), stl = m.querySelector('#uist'); let running = false;
-  m.querySelector('#c').onclick = () => { if (running && !confirm('The install keeps running on the server. Close this window?')) return; m.remove(); };
+  m.querySelector('#c').onclick = async () => { if (running && !await UX.confirm({ title: 'Close this window?', body: '<p>The install keeps running on the server — you can check on it later from the Overview.</p>', ok: 'Close window', cancel: 'Keep watching' })) return; m.remove(); };
   m.querySelector('#go').onclick = async () => {
     const pw = m.querySelector('#sp')?.value || ''; if (needPw && !pw) return toast('Enter the sudo password', true);
+    if (!update && !await uiInstallDoubleConfirm(s, L, opts, typeof UX !== 'undefined' && UX.confirm)) { stl.textContent = 'Install cancelled — nothing was changed'; return; }
     running = true; m.querySelector('#go').disabled = true; log.classList.remove('hidden'); log.textContent = ''; stl.textContent = 'Running…';
     const dir = (i.home || '~') + '/.uiable-connect', job = dir + '/uiable-job.sh', out = dir + '/uiable-job.log';
     const q = x => "'" + x.replace(/'/g, "'\\''") + "'";
@@ -232,4 +260,4 @@ async function uiInstallProgress(s, u, i, L, update, needPw, opts) {
   };
 }
 
-if (typeof module !== 'undefined') module.exports = { UI_DETECT, UI_JOB, kv };
+if (typeof module !== 'undefined') module.exports = { UI_DETECT, UI_JOB, kv, uiInstallDoubleConfirm };

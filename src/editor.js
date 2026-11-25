@@ -28,7 +28,7 @@ async function editFile(id, p, useSudo) {
       await call('fs:write', id, p, crlf ? v.replace(/\n/g, '\r\n') : v, !!asSudo);
       txt = v; toast(asSudo ? 'Saved with sudo: ' + name : 'Saved ' + name); update();
     } catch {} saving = false; };
-  const close = () => { if (ta.value !== txt && !confirm('You have unsaved changes. Close without saving?')) return; m.remove(); };
+  const close = async () => { if (ta.value !== txt && !await UX.confirm({ title: 'Discard unsaved changes?', body: '<p>You have unsaved changes in this file.</p>', ok: 'Discard', cancel: 'Keep editing', danger: true })) return; m.remove(); };
   const drop = m.querySelector('#svdrop'), caret = m.querySelector('#svmenu');
   caret.onclick = e => { e.stopPropagation(); drop.classList.toggle('hidden'); };
   const hideDrop = () => drop.classList.add('hidden');

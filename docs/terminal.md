@@ -53,9 +53,14 @@ Terminal colours follow **Settings → Terminal theme**, and can track the app t
 
 ## Use sudo
 
-On SSH sessions, tick **Use sudo** in the terminal toolbar. New tabs then open a root login shell (`sudo -i`) using the password saved for that connection (sudo password, or login password if that is what you use with sudo). The password is handed to sudo through a deleted temp file on a file descriptor — it is never typed into the terminal, so it can't echo on screen. Works on desktop, Docker, iOS and Android.
+On SSH sessions, tick **Use sudo** in the terminal toolbar. New tabs then open a root shell that **keeps your own environment** (`sudo -E -s`, or `sudo -s` where the server's sudo policy refuses `-E`): your home folder, current folder, PATH and shell setup stay, so your usual commands and aliases work, just as root. It uses the password saved for that connection (sudo password, or login password if that is what you use with sudo). The password is handed to sudo through a deleted temp file on a file descriptor — it is never typed into the terminal, so it never appears on screen, in scrollback or in shell history. Works on desktop, Docker, iOS and Android.
 
-- Tab labels show a **sudo** pill when the shell is root.
+### Use root
+
+Hover over **Use sudo** (or press the ▾ next to it; tap or long-press on touch screens) and tick **Use root** for a full root login (`sudo -i`): root's home folder, PATH, profile and starting folder. Prefer this when you will create files, because programs run under Use sudo can leave root-owned files in your home folder.
+
+- The toolbar label turns **green** for Use sudo and **red** for Use root, and each tab shows a matching **sudo** / **root** pill.
+- **Use sudo and Use root switch off every time you connect, disconnect, reconnect or reload** (terminal and Files). Your saved sudo password stays saved.
 - Docker actions that need root (for example `docker exec` when your user is not in the `docker` group) work in those tabs because the shell is already root.
 - Untick to open normal user shells again. Existing tabs are unchanged; only new tabs follow the checkbox.
 

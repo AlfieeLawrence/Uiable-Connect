@@ -166,7 +166,7 @@ function vHealth(s, u, v) {
     catch (e) { toast('Health check failed: ' + e.message, true); }
     u.healthBusy = false; if (anyPane(s.id, 'health')) draw(); };
   const refreshLists = async () => {
-    if (!confirm(`Refresh the package lists on this server?\n\nThis runs apt-get update (or dnf/yum makecache, apk update) as root${s.has_sudoPassword ? ' using your saved sudo password' : ' with sudo -n, so it only works as root or with passwordless sudo'}. Nothing is installed or upgraded.`)) return;
+    if (!await UX.confirm({ title: 'Refresh the package lists on this server?', ok: 'Refresh lists', body: `<p>This runs <span class="mono">apt-get update</span> (or dnf/yum makecache, apk update) as root${s.has_sudoPassword ? ' using your saved sudo password' : ' with <span class="mono">sudo -n</span>, so it only works as root or with passwordless sudo'}. Nothing is installed or upgraded.</p>` })) return;
     u.healthBusy = true; draw();
     try { const r = s.has_sudoPassword ? await uc.call('sudo:exec', s.id, HEALTH_REFRESH) : await uc.call('exec', s.id, HEALTH_REFRESH, 180000);
       if (r.code) toast('Couldn\'t refresh: ' + ((r.err || r.out || '').trim().split('\n').pop() || 'needs root or passwordless sudo'), true); else toast('Package lists refreshed'); }

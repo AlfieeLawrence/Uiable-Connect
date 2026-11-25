@@ -41,7 +41,7 @@ function backupDialog() {
   m.querySelector('#bim').onclick = () => { const p = pw(); if (!p) return; const i = document.createElement('input'); i.type = 'file'; i.accept = '.ucbackup,application/json,*/*';
     i.onchange = async () => { const f = i.files[0]; if (!f) return;
       try { const d = await ucbDecrypt(await f.text(), p); if (!Array.isArray(d.servers)) throw new Error('Backup has no servers');
-        if (mode === 'replace' && !confirm(`Replace all saved servers with the ${d.servers.length} in this backup?`)) return;
+        if (mode === 'replace' && !await UX.confirm({ title: 'Replace all saved connections?', danger: true, ok: 'Replace', typed: 'replace', body: `<p>Your ${typeof servers !== 'undefined' ? servers.filter(x => !x.quick).length : 'current'} saved connection(s) are deleted and replaced with the ${d.servers.length} in this backup.</p>` })) return;
         const n = await uc.call('backup:import', { servers: d.servers, snippets: d.snippets || [] }, mode); toast(`Imported ${n} server(s)`); m.remove(); refresh(); }
       catch (e) { toast(e.message, true); } }; i.click(); };
 }
